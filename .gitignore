@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+# --- Custom Ignore for Fude Polygon MVP ---
+*.geojson
+workspace-*.json
+*.kml
+*.csv
