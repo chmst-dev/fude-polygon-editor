@@ -5,8 +5,9 @@ export function parseGeoJSON(jsonStr: string): any[] {
     return features.map((f: any, idx: number) => ({
       internalId: f.properties?.id || f.properties?.FID || `poly-${idx}-${Date.now()}`,
       geometry: f.geometry,
-      producerName: f.properties?.producerName || f.properties?.「生産者名」 || "",
-      cropType: f.properties?.cropType || f.properties?.「作付」 || "",
+      // 日本語キーにはブラケット記法 ['キー名'] を使用する
+      producerName: f.properties?.producerName || f.properties?.['生産者名'] || "",
+      cropType: f.properties?.cropType || f.properties?.['作付'] || "",
       notes: f.properties?.notes || "",
       remarks: f.properties?.remarks || "",
       originalProperties: f.properties || {}
@@ -16,9 +17,7 @@ export function parseGeoJSON(jsonStr: string): any[] {
   }
 }
 
-// KMLやGeoJSONのエクスポートを「編集・入力されたデータのみ」に絞り込む
 export function exportToGeoJSON(state: { polygons: any[], points: any[] }) {
-  // 入力があるものだけを抽出
   const editedPolygons = state.polygons.filter(p => p.producerName || p.cropType || p.notes || p.remarks);
   
   const geojson = {
@@ -51,7 +50,6 @@ export function exportToKML(state: { polygons: any[], points: any[] }) {
   
   let kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n  <Document>\n    <name>圃場マップ(入力済)</name>\n`;
 
-  // ポリゴンの出力
   editedPolygons.forEach(p => {
     const name = p.producerName ? `${p.producerName} (${p.cropType || '未設定'})` : '名称未設定';
     kml += `    <Placemark>\n      <name>${name}</name>\n      <description><![CDATA[生産者: ${p.producerName}\n作付: ${p.cropType}\nメモ: ${p.notes}\n備考: ${p.remarks}]]></description>\n`;
@@ -76,7 +74,6 @@ export function exportToKML(state: { polygons: any[], points: any[] }) {
     kml += `    </Placemark>\n`;
   });
 
-  // ポイント（入口など）の出力
   state.points.forEach(pt => {
     kml += `    <Placemark>\n      <name>${pt.name} [${pt.pointType}]</name>\n      <description>${pt.description || ''}</description>\n      <Point>\n        <coordinates>${pt.coordinates[0]},${pt.coordinates[1]},0</coordinates>\n      </Point>\n    </Placemark>\n`;
   });
@@ -101,7 +98,7 @@ export function exportToCSV(state: { polygons: any[], points: any[] }) {
     csv += `"${pt.id}","${pt.name || ''}","${pt.pointType || ''}","${pt.description || ''}","","ポイント","${pt.coordinates[0]}/${pt.coordinates[1]}"\n`;
   });
   
-  downloadFile(new Uint8Array([0xEF, 0xBB, 0xBF]), 'fields_summary.csv', 'text/csv'); // BOM
+  downloadFile(new Uint8Array([0xEF, 0xBB, 0xBF]), 'fields_summary.csv', 'text/csv'); 
   downloadFile(csv, 'fields_summary.csv', 'text/csv');
 }
 
