@@ -1,61 +1,114 @@
-import { v4 as uuidv4 } from 'uuid';
-
-export const parseGeoJSON = (geoJsonStr: string): any[] => {
+export function parseGeoJSON(jsonStr: string): any[] {
   try {
-    const data = JSON.parse(geoJsonStr);
-    if (!data.features) return [];
-    return data.features
-      .filter((f: any) => f.geometry && f.geometry.coordinates)
-      .map((feature: any) => ({
-        internalId: uuidv4(),
-        sourceFeatureId: feature.properties?.id || feature.id || null,
-        producerName: '', fieldName: feature.properties?.name || '', cropType: '', areaText: '', notes: '', remarks: '',
-        geometry: feature.geometry, properties: feature.properties,
-      }));
-  } catch(e) {
-    alert('ファイルの解析に失敗しました。');
+    const geo = JSON.parse(jsonStr);
+    const features = geo.features || [];
+    return features.map((f: any, idx: number) => ({
+      internalId: f.properties?.id || f.properties?.FID || `poly-${idx}-${Date.now()}`,
+      geometry: f.geometry,
+      producerName: f.properties?.producerName || f.properties?.「生産者名」 || "",
+      cropType: f.properties?.cropType || f.properties?.「作付」 || "",
+      notes: f.properties?.notes || "",
+      remarks: f.properties?.remarks || "",
+      originalProperties: f.properties || {}
+    }));
+  } catch (e) {
     return [];
   }
-};
+}
 
-const isEdited = (p: any, points: any[]) => {
-  return p.producerName !== '' || p.cropType !== '' || p.notes !== '' || p.remarks !== '' || points.some((pt: any) => pt.fieldInternalId === p.internalId);
-};
+// KMLやGeoJSONのエクスポートを「編集・入力されたデータのみ」に絞り込む
+export function exportToGeoJSON(state: { polygons: any[], points: any[] }) {
+  // 入力があるものだけを抽出
+  const editedPolygons = state.polygons.filter(p => p.producerName || p.cropType || p.notes || p.remarks);
+  
+  const geojson = {
+    type: "FeatureCollection",
+    features: [
+      ...editedPolygons.map(p => ({
+        type: "Feature",
+        geometry: p.geometry,
+        properties: {
+          id: p.internalId,
+          producerName: p.producerName,
+          cropType: p.cropType,
+          notes: p.notes,
+          remarks: p.remarks,
+          ...p.originalProperties
+        }
+      })),
+      ...state.points.map(pt => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: pt.coordinates },
+        properties: { id: pt.id, name: pt.name, pointType: pt.pointType, description: pt.description }
+      }))
+    ]
+  };
+  downloadFile(JSON.stringify(geojson, null, 2), 'fields_edited.geojson', 'application/json');
+}
 
-export const exportToCSV = ({ polygons, points }: any) => {
-  const editedPolygons = polygons.filter((p: any) => isEdited(p, points));
-  const header = ['ID', '生産者名', '通称', '作物', '面積', '注意点', '備考'];
-  const rows = editedPolygons.map((p: any) => [ p.internalId, p.producerName, p.fieldName, p.cropType, p.areaText, p.notes, p.remarks ].map(field => `"${(field || '').replace(/"/g, '""')}"`).join(','));
-  downloadFile("data:text/csv;charset=utf-8,\uFEFF" + [header.join(','), ...rows].join('\n'), 'fields_edited.csv');
-};
-
-export const exportToGeoJSON = ({ polygons, points }: any) => {
-  const editedPolygons = polygons.filter((p: any) => isEdited(p, points));
-  const features = editedPolygons.map((p: any) => ({
-    type: "Feature", geometry: p.geometry,
-    properties: { id: p.internalId, producerName: p.producerName, fieldName: p.fieldName, cropType: p.cropType, notes: p.notes, points: points.filter((pt: any) => pt.fieldInternalId === p.internalId) }
-  }));
-  downloadFile("data:application/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ type: "FeatureCollection", features }, null, 2)), 'fields_edited.geojson');
-};
-
-export const exportToKML = ({ polygons, points }: any) => {
-  const editedPolygons = polygons.filter((p: any) => isEdited(p, points));
+export function exportToKML(state: { polygons: any[], points: any[] }) {
+  const editedPolygons = state.polygons.filter(p => p.producerName || p.cropType || p.notes || p.remarks);
+  
   let kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n  <Document>\n    <name>圃場マップ(入力済)</name>\n`;
-  editedPolygons.forEach((p: any) => {
-    kml += `    <Placemark>\n      <name>${p.fieldName || '名称未設定'}</name>\n      <description><![CDATA[生産者: ${p.producerName}<br>作物: ${p.cropType}<br>注意点: ${p.notes}]]></description>\n      ${createKMLGeometry(p.geometry)}\n    </Placemark>\n`;
-  });
-  points.forEach((pt: any) => {
-    kml += `    <Placemark>\n      <name>${pt.pointType}: ${pt.name}</name>\n      <description>${pt.description}</description>\n      <Point><coordinates>${pt.coordinates[0]},${pt.coordinates[1]},0</coordinates></Point>\n    </Placemark>\n`;
-  });
-  downloadFile("data:application/vnd.google-earth.kml+xml;charset=utf-8," + encodeURIComponent(kml + `  </Document>\n</kml>`), 'fields_edited.kml');
-};
 
-const createKMLGeometry = (geometry: any) => {
-  if (geometry.type === 'Polygon') return `<Polygon><outerBoundaryIs><LinearRing><coordinates>${geometry.coordinates[0].map((c: any) => `${c[0]},${c[1]},0`).join(' ')}</coordinates></LinearRing></outerBoundaryIs></Polygon>`;
-  if (geometry.type === 'MultiPolygon') return `<Polygon><outerBoundaryIs><LinearRing><coordinates>${geometry.coordinates[0][0].map((c: any) => `${c[0]},${c[1]},0`).join(' ')}</coordinates></LinearRing></outerBoundaryIs></Polygon>`;
-  return '';
-};
+  // ポリゴンの出力
+  editedPolygons.forEach(p => {
+    const name = p.producerName ? `${p.producerName} (${p.cropType || '未設定'})` : '名称未設定';
+    kml += `    <Placemark>\n      <name>${name}</name>\n      <description><![CDATA[生産者: ${p.producerName}\n作付: ${p.cropType}\nメモ: ${p.notes}\n備考: ${p.remarks}]]></description>\n`;
+    
+    if (p.geometry && p.geometry.type === 'Polygon') {
+      kml += `      <Polygon>\n        <outerBoundaryIs>\n          <LinearRing>\n            <coordinates>\n`;
+      p.geometry.coordinates[0].forEach((coord: number[]) => {
+        kml += `              ${coord[0]},${coord[1]},0\n`;
+      });
+      kml += `            </coordinates>\n          </LinearRing>\n        </outerBoundaryIs>\n      </Polygon>\n`;
+    } else if (p.geometry && p.geometry.type === 'MultiPolygon') {
+      kml += `      <MultiGeometry>\n`;
+      p.geometry.coordinates.forEach((poly: any) => {
+        kml += `        <Polygon>\n          <outerBoundaryIs>\n            <LinearRing>\n              <coordinates>\n`;
+        poly[0].forEach((coord: number[]) => {
+          kml += `                ${coord[0]},${coord[1]},0\n`;
+        });
+        kml += `              </coordinates>\n            </LinearRing>\n          </outerBoundaryIs>\n        </Polygon>\n`;
+      });
+      kml += `      </MultiGeometry>\n`;
+    }
+    kml += `    </Placemark>\n`;
+  });
 
-const downloadFile = (content: string, fileName: string) => {
-  const link = document.createElement("a"); link.href = encodeURI(content); link.download = fileName; link.click();
-};
+  // ポイント（入口など）の出力
+  state.points.forEach(pt => {
+    kml += `    <Placemark>\n      <name>${pt.name} [${pt.pointType}]</name>\n      <description>${pt.description || ''}</description>\n      <Point>\n        <coordinates>${pt.coordinates[0]},${pt.coordinates[1]},0</coordinates>\n      </Point>\n    </Placemark>\n`;
+  });
+
+  kml += `  </Document>\n</kml>`;
+  downloadFile(kml, 'fields_edited.kml', 'application/vnd.google-earth.kml+xml');
+}
+
+export function exportToCSV(state: { polygons: any[], points: any[] }) {
+  const editedPolygons = state.polygons.filter(p => p.producerName || p.cropType || p.notes || p.remarks);
+  let csv = "ID,生産者名,作付種別,メモ,備考,タイプ,座標(中心目安/代表点)\n";
+  
+  editedPolygons.forEach(p => {
+    let lng = 0, lat = 0;
+    if (p.geometry && p.geometry.type === 'Polygon') {
+      const c = p.geometry.coordinates[0][0]; lng = c[0]; lat = c[1];
+    }
+    csv += `"${p.internalId}","${p.producerName || ''}","${p.cropType || ''}","${p.notes || ''}","${p.remarks || ''}","圃場","${lng}/${lat}"\n`;
+  });
+  
+  state.points.forEach(pt => {
+    csv += `"${pt.id}","${pt.name || ''}","${pt.pointType || ''}","${pt.description || ''}","","ポイント","${pt.coordinates[0]}/${pt.coordinates[1]}"\n`;
+  });
+  
+  downloadFile(new Uint8Array([0xEF, 0xBB, 0xBF]), 'fields_summary.csv', 'text/csv'); // BOM
+  downloadFile(csv, 'fields_summary.csv', 'text/csv');
+}
+
+function downloadFile(content: any, fileName: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fileName;
+  a.click();
+}
