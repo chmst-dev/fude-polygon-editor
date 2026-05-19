@@ -38,9 +38,9 @@ function MapZoomController({ selectedPolygonId, polygons }: any) {
 
 export default function LeafletMap({ polygons, points, selectedPolygonId, setSelectedPolygonId, isAddingPoint, setIsAddingPoint, setPoints }: any) {
   return (
-    <MapContainer center={[35.6812, 139.7671]} zoom={13} style={{ height: '100%', width: '100%', cursor: isAddingPoint ? 'crosshair' : 'grab' }}>
+    <MapContainer center={[35.6812, 139.7671]} zoom={13} style={{ height: '100%', width: '100%', cursor: isAddingPoint ? 'crosshair' : 'grab' }} preferCanvas={true}>
       <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxZoom={19} />
-      {polygons.length > 0 && <GeoJSON key={JSON.stringify(polygons.map((p:any)=>p.internalId))+selectedPolygonId} data={{ type: "FeatureCollection", features: polygons.map((p:any) => ({ type: "Feature", geometry: p.geometry, properties: p })) } as any} style={(f: any) => ({ fillColor: f.properties.internalId === selectedPolygonId ? '#4f46e5' : '#10b981', weight: f.properties.internalId === selectedPolygonId ? 3 : 1, color: f.properties.internalId === selectedPolygonId ? '#312e81' : '#047857', fillOpacity: f.properties.internalId === selectedPolygonId ? 0.6 : 0.2 })} onEachFeature={(f: any, l: any) => l.on({ click: () => setSelectedPolygonId(f.properties.internalId) })} />}
+      {polygons.length > 0 && <GeoJSON key={`map-layer-${polygons.length}`} data={{ type: "FeatureCollection", features: polygons.map((p:any) => ({ type: "Feature", geometry: p.geometry, properties: p })) } as any} style={(f: any) => ({ fillColor: f.properties.internalId === selectedPolygonId ? '#4f46e5' : '#10b981', weight: f.properties.internalId === selectedPolygonId ? 3 : 1, color: f.properties.internalId === selectedPolygonId ? '#312e81' : '#047857', fillOpacity: f.properties.internalId === selectedPolygonId ? 0.6 : 0.2 })} onEachFeature={(f: any, l: any) => l.on({ click: () => setSelectedPolygonId(f.properties.internalId) })} />}
       {points.map((pt: any) => (
         <Marker key={pt.id} position={[pt.coordinates[1], pt.coordinates[0]]} icon={createCustomIcon(pt.pointType)}>
           <Popup><div className="font-bold">{pt.name}</div></Popup>
