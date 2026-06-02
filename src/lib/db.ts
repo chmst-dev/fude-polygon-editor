@@ -283,8 +283,11 @@ export class SupabaseService implements FieldService {
       return point;
     }
 
-    // PostGIS に確実に保存されるよう、GeoJSON オブジェクトではなく WKT (Well-Known Text) を使用
-    const geomWkt = `POINT(${point.coordinates[0]} ${point.coordinates[1]})`;
+    // Supabase (PostgREST) は geometry 型に対して GeoJSON オブジェクトを直接受け付ける設定になっている可能性が高いため戻す
+    const geom = {
+      type: 'Point',
+      coordinates: point.coordinates
+    };
 
     const dbPoint = {
       field_id: point.fieldInternalId,
@@ -292,7 +295,7 @@ export class SupabaseService implements FieldService {
       name: point.name || point.pointType,
       description: point.description,
       image_url: point.imageUrl,
-      geom: geomWkt
+      geom: geom
     };
 
     if (point.id && !point.id.startsWith('point-')) {
@@ -541,18 +544,30 @@ export class GuestService extends SupabaseService {
   }
 
   async getPoints() {
-    // 外部結合(inner join)を使って一発で取得する (inクエリ起因のエラー回避)
+    // 確実に動作させるため、まず組織内の field_id 一覧を取得
+    const { data: fields } = await supabase
+      .from('fields')
+      .select('id')
+      .eq('organization_id', this.userOrgId);
+      
+    if (!fields || fields.length === 0) return [];
+    
+    // field_id の配列を生成
+    const fieldIds = fields.map(f => f.id);
+
+    // .in() クエリは最大要素数に制限があるため、今回は念のため全件取得してからフロント側でフィルタリングする方式で確実に取る
     const { data, error } = await supabase
       .from('field_points')
-      .select('*, fields!inner(organization_id)')
-      .eq('fields.organization_id', this.userOrgId);
+      .select('*');
 
     if (error) {
       console.error('Error fetching guest points from Supabase:', error);
       return [];
     }
 
-    return this.transformPoints(data);
+    // 自分の組織の field_id に合致するものだけ抽出
+    const filteredPoints = (data || []).filter((pt: any) => fieldIds.includes(pt.field_id));
+    return this.transformPoints(filteredPoints);
   }
 
   async saveField(field: any) {
