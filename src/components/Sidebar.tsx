@@ -1,14 +1,47 @@
 'use client';
 import React, { useState } from 'react';
-import { Target, Search } from 'lucide-react';
+import { Target, Search, CheckSquare, Square, Layers, Navigation, ExternalLink, MapPin } from 'lucide-react';
 import { calculateArea } from '@/lib/utils';
+import * as turf from '@turf/turf';
 
-export default function Sidebar({ polygons, points, setPolygons, setPoints, selectedPolygonId, setSelectedPolygonId, isAddingPoint, setIsAddingPoint }: any) {
-  const [activeTab, setActiveTab] = useState<'list' | 'edit' | 'points'>('list');
+export default function Sidebar({ 
+  polygons, 
+  points, 
+  setPolygons, 
+  setPoints, 
+  selectedPolygonId, 
+  setSelectedPolygonId, 
+  isAddingPoint, 
+  setIsAddingPoint,
+  dbService,
+  selectedPolygonIds = [],
+  setSelectedPolygonIds,
+  isMultiSelectMode = false,
+  setIsMultiSelectMode,
+  gpsPosition = null,
+  activeTabOverride,
+  setActiveTabOverride
+}: any) {
+  const [localActiveTab, setLocalActiveTab] = useState<'list' | 'edit' | 'points'>('list');
+  
+  // スマホの下部ナビとタブの状態を同期
+  const activeTab = activeTabOverride || localActiveTab;
+  const sidebarTab = activeTab === 'map' ? 'list' : activeTab;
+  const setActiveTab = setActiveTabOverride ? (tab: any) => setActiveTabOverride(tab) : setLocalActiveTab;
+
   const [searchQuery, setSearchQuery] = useState('');
   
+  // グループ化時のフォーム入力用
+  const [groupProducer, setGroupProducer] = useState('');
+  const [groupFieldName, setGroupFieldName] = useState('');
+  const [groupCrop, setGroupCrop] = useState('');
+  const [showGroupForm, setShowGroupForm] = useState(false);
+
   const selectedPolygon = polygons.find((p: any) => p.internalId === selectedPolygonId);
   const relatedPoints = points.filter((p: any) => p.fieldInternalId === selectedPolygonId);
+
+  // ゲスト閲覧専用モードかチェック
+  const isGuestMode = dbService?.isReadOnly() || false;
 
   const isEdited = (p: any) => p.producerName || p.cropType || p.notes || p.remarks || points.some((pt: any) => pt.fieldInternalId === p.internalId);
   
@@ -23,67 +56,293 @@ export default function Sidebar({ polygons, points, setPolygons, setPoints, sele
 
   // 圃場名の自動生成
   const autoGenerateName = () => {
-    if (!selectedPolygon.producerName) {
+    if (isGuestMode) return;
+    if (!selectedPolygon || !selectedPolygon.producerName) {
       alert("先に「生産者名」を入力してください。"); return;
     }
     const area = calculateArea(selectedPolygon.geometry);
     setPolygons((prev: any) => prev.map((p: any) => p.internalId === selectedPolygonId ? { ...p, fieldName: `${selectedPolygon.producerName}_${area}a` } : p));
   };
 
+  // Googleマップ用重心算出
+  const getCentroid = (polygon: any) => {
+    if (!polygon || !polygon.geometry) return null;
+    try {
+      const cent = turf.centroid(turf.feature(polygon.geometry));
+      return cent.geometry.coordinates;
+    } catch (e) {
+      if (polygon.geometry.coordinates?.[0]?.[0]) {
+        return polygon.geometry.coordinates[0][0];
+      }
+      return null;
+    }
+  };
+
+  const centroid = getCentroid(selectedPolygon);
+  const googleMapUrl = centroid ? `https://www.google.com/maps/search/?api=1&query=${centroid[1]},${centroid[0]}` : '';
+  const googleDirUrl = centroid ? `https://www.google.com/maps/dir/?api=1&destination=${centroid[1]},${centroid[0]}` : '';
+
+  // GPS現在地からのピン追加
+  const addPointAtGps = () => {
+    if (isGuestMode) return;
+    if (!gpsPosition) {
+      alert("現在位置が取得できていません。GPS精度を確認してください。");
+      return;
+    }
+    setPoints((prev: any) => [
+      ...prev,
+      {
+        id: `point-${Date.now()}`,
+        fieldInternalId: selectedPolygonId,
+        pointType: "入口",
+        name: "GPS現在地",
+        description: "現在地より追加",
+        coordinates: [gpsPosition.lng, gpsPosition.lat]
+      }
+    ]);
+  };
+
+  // 圃場グループ化処理
+  const handleGroupPolygons = async () => {
+    if (isGuestMode) return;
+    if (selectedPolygonIds.length < 2) {
+      alert('グループ化するには、2つ以上の筆ポリゴンを選択してください。');
+      return;
+    }
+    if (!groupProducer || !groupFieldName) {
+      alert('生産者名と圃場名（通称）を入力してください。');
+      return;
+    }
+
+    try {
+      if (dbService) {
+        const newField = await dbService.groupPolygons(selectedPolygonIds, {
+          producerName: groupProducer,
+          fieldName: groupFieldName,
+          cropType: groupCrop,
+          _localGeometries: polygons.reduce((acc: any, p: any) => {
+            acc[p.internalId] = p;
+            return acc;
+          }, {})
+        });
+
+        if (newField) {
+          const targets = polygons.filter((p: any) => selectedPolygonIds.includes(p.internalId));
+          let mergedGeom = targets[0]?.geometry;
+          if (targets.length > 1) {
+            try {
+              let unioned = turf.feature(targets[0].geometry);
+              for (let i = 1; i < targets.length; i++) {
+                unioned = turf.union(turf.featureCollection([unioned, turf.feature(targets[i].geometry)])) || unioned;
+              }
+              mergedGeom = unioned.geometry;
+            } catch (e) {}
+          }
+
+          const fullNewField = {
+            ...newField,
+            geometry: mergedGeom,
+            areaText: targets.reduce((acc: number, curr: any) => acc + (calculateArea(curr.geometry) || 0), 0).toString()
+          };
+
+          setPolygons((prev: any) => [
+            ...prev.filter((p: any) => !selectedPolygonIds.includes(p.internalId)),
+            fullNewField
+          ]);
+          
+          setSelectedPolygonId(fullNewField.internalId);
+          setActiveTab('edit');
+        }
+
+        alert('圃場をグループ化して新規登録しました。');
+        setSelectedPolygonIds([]);
+        setIsMultiSelectMode(false);
+        setShowGroupForm(false);
+        setGroupProducer('');
+        setGroupFieldName('');
+        setGroupCrop('');
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert('グループ化に失敗しました: ' + e.message);
+    }
+  };
+
+  const toggleSelectPolygon = (id: string) => {
+    if (selectedPolygonIds.includes(id)) {
+      setSelectedPolygonIds(selectedPolygonIds.filter((x: string) => x !== id));
+    } else {
+      setSelectedPolygonIds([...selectedPolygonIds, id]);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full pr-2">
-      <div className="flex border-b text-sm font-medium shrink-0">
-        <button className={`flex-1 py-3 text-center ${activeTab === 'list' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:bg-gray-50'}`} onClick={() => setActiveTab('list')}>一覧</button>
-        <button className={`flex-1 py-3 text-center ${activeTab === 'edit' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:bg-gray-50'}`} onClick={() => setActiveTab('edit')} disabled={!selectedPolygonId}>編集</button>
-        <button className={`flex-1 py-3 text-center ${activeTab === 'points' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:bg-gray-50'}`} onClick={() => setActiveTab('points')} disabled={!selectedPolygonId}>ポイント</button>
+      {/* タブヘッダー (PCでは常に表示、スマホ時は下部タブナビと連動するため折りたたまれてもよいが、上部切り替えとしても機能させます) */}
+      <div className="flex border-b text-xs md:text-sm font-semibold shrink-0 bg-slate-50 border-r">
+        <button className={`flex-1 py-3 text-center transition ${sidebarTab === 'list' ? 'border-b-2 border-indigo-600 bg-white text-indigo-600 font-bold' : 'text-gray-500 hover:bg-gray-100'}`} onClick={() => setActiveTab('list')}>一覧</button>
+        <button className={`flex-1 py-3 text-center transition ${sidebarTab === 'edit' ? 'border-b-2 border-indigo-600 bg-white text-indigo-600 font-bold' : 'text-gray-500 hover:bg-gray-100 disabled:opacity-40'}`} onClick={() => setActiveTab('edit')} disabled={!selectedPolygonId}>編集</button>
+        <button className={`flex-1 py-3 text-center transition ${sidebarTab === 'points' ? 'border-b-2 border-indigo-600 bg-white text-indigo-600 font-bold' : 'text-gray-500 hover:bg-gray-100 disabled:opacity-40'}`} onClick={() => setActiveTab('points')} disabled={!selectedPolygonId}>ポイント</button>
       </div>
       
-      <div className="flex-1 overflow-y-auto p-4">
-        {activeTab === 'list' && (
+      <div className="flex-1 overflow-y-auto p-3 md:p-4 border-r bg-white">
+        {sidebarTab === 'list' && (
           <div>
+            {/* 複数選択トグルエリア (ゲスト閲覧時は非表示にします) */}
+            {!isGuestMode && (
+              <div className="mb-4 flex items-center justify-between bg-slate-50 border rounded-xl p-3 text-xs font-semibold">
+                <span className="flex items-center gap-1.5 text-slate-700">
+                  <Layers size={14} className="text-indigo-600" />
+                  複数筆のグループ化
+                </span>
+                <button 
+                  onClick={() => {
+                    setIsMultiSelectMode(!isMultiSelectMode);
+                    setSelectedPolygonIds([]);
+                    setShowGroupForm(false);
+                  }} 
+                  className={`px-3 py-1.5 rounded-lg border shadow-sm transition font-bold ${isMultiSelectMode ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700' : 'bg-white hover:bg-slate-50 text-slate-700'}`}
+                >
+                  {isMultiSelectMode ? '複数選択中...' : '複数選択モード'}
+                </button>
+              </div>
+            )}
+
+            {/* 複数選択時のグループ化操作パネル */}
+            {isMultiSelectMode && !isGuestMode && (
+              <div className="mb-4 bg-indigo-50/50 border border-indigo-100 rounded-xl p-4 animate-fade-in text-xs">
+                <p className="font-bold text-indigo-900 mb-2">
+                  選択中の筆: <span className="text-indigo-700 bg-white border px-2 py-0.5 rounded-full font-extrabold">{selectedPolygonIds.length}</span> 件
+                </p>
+                {selectedPolygonIds.length >= 2 ? (
+                  !showGroupForm ? (
+                    <button 
+                      onClick={() => setShowGroupForm(true)}
+                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded-lg transition shadow-md"
+                    >
+                      これらの筆を1つの圃場にする
+                    </button>
+                  ) : (
+                    <div className="space-y-3 mt-2 pt-2 border-t border-indigo-100">
+                      <div>
+                        <label className="block text-slate-600 font-bold mb-1">生産者名 *</label>
+                        <input type="text" value={groupProducer} onChange={e => setGroupProducer(e.target.value)} placeholder="例: 山田太郎" className="w-full border p-2 bg-white rounded-lg outline-none focus:border-indigo-500" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-600 font-bold mb-1">圃場名（通称） *</label>
+                        <input type="text" value={groupFieldName} onChange={e => setGroupFieldName(e.target.value)} placeholder="例: 上野原" className="w-full border p-2 bg-white rounded-lg outline-none focus:border-indigo-500" />
+                      </div>
+                      <div>
+                        <label className="block text-slate-600 font-bold mb-1">作付作物</label>
+                        <input type="text" value={groupCrop} onChange={e => setGroupCrop(e.target.value)} placeholder="例: コシヒカリ" className="w-full border p-2 bg-white rounded-lg outline-none focus:border-indigo-500" />
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <button onClick={handleGroupPolygons} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded-lg transition shadow">作成する</button>
+                        <button onClick={() => setShowGroupForm(false)} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-2 rounded-lg transition">キャンセル</button>
+                      </div>
+                    </div>
+                  )
+                ) : (
+                  <p className="text-slate-500">地図上でまとめたい筆ポリゴンを2箇所以上クリックして選択してください。</p>
+                )}
+              </div>
+            )}
+
             <div className="relative mb-4">
-              <input type="text" placeholder="生産者名・圃場名で検索..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full pl-8 pr-2 py-2 border rounded text-sm outline-none focus:border-indigo-500" />
-              <Search size={16} className="absolute left-2 top-2.5 text-gray-400" />
+              <input type="text" placeholder="生産者名・圃場名で検索..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full pl-8 pr-2 py-2 border rounded-lg text-sm outline-none focus:border-indigo-500 shadow-sm bg-slate-50/50" />
+              <Search size={16} className="absolute left-2.5 top-3 text-gray-400" />
             </div>
             
             {editedPolygons.length > 0 && (
                <div className="mb-4">
-                 <h3 className="font-bold text-sm text-indigo-600 mb-2">作業済み ({editedPolygons.length})</h3>
+                 <h3 className="font-extrabold text-xs text-indigo-700 tracking-wider mb-2">登録済み圃場 ({editedPolygons.length})</h3>
                  {editedPolygons.map((p: any) => (
-                   <div key={p.internalId} onClick={() => { setSelectedPolygonId(p.internalId); setActiveTab('edit'); }} className={`p-2 border rounded cursor-pointer mb-1 text-sm font-bold ${selectedPolygonId === p.internalId ? 'border-indigo-500 bg-indigo-50' : 'hover:bg-gray-50'}`}>
-                     {p.fieldName || (p.producerName ? `${p.producerName} (名称未設定)` : '名称未設定')}
-                     <span className="text-xs font-normal text-gray-500 ml-2">{calculateArea(p.geometry)}a</span>
+                   <div 
+                     key={p.internalId} 
+                     onClick={() => {
+                       if (isMultiSelectMode && !isGuestMode) {
+                         toggleSelectPolygon(p.internalId);
+                       } else {
+                         setSelectedPolygonId(p.internalId); 
+                         setActiveTab('edit'); 
+                       }
+                     }} 
+                     className={`p-3 border rounded-xl cursor-pointer mb-1.5 text-xs transition flex items-center justify-between ${
+                       isMultiSelectMode && selectedPolygonIds.includes(p.internalId)
+                         ? 'border-amber-500 bg-amber-50 shadow-sm'
+                         : selectedPolygonId === p.internalId
+                           ? 'border-indigo-500 bg-indigo-50/70 shadow-sm font-bold text-indigo-900'
+                           : 'hover:bg-slate-50 text-slate-800 border-slate-100 bg-slate-50/20'
+                     }`}
+                   >
+                     <div className="flex items-center gap-2">
+                       {isMultiSelectMode && !isGuestMode && (
+                         selectedPolygonIds.includes(p.internalId) ? <CheckSquare size={14} className="text-amber-600" /> : <Square size={14} className="text-slate-400" />
+                       )}
+                       <span>{p.fieldName || (p.producerName ? `${p.producerName} (名称未設定)` : '名称未設定')}</span>
+                     </div>
+                     <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-full">{calculateArea(p.geometry)}a</span>
                    </div>
                  ))}
                </div>
             )}
             
-            <h3 className="font-bold text-sm text-gray-600 mb-2">未着手 (一部表示)</h3>
+            <h3 className="font-extrabold text-xs text-slate-500 tracking-wider mb-2">未着手筆ポリゴン (最初の100件表示)</h3>
             {uneditedPolygons.length === 0 ? <p className="text-xs text-gray-400">見つかりません</p> : uneditedPolygons.map((p: any) => (
-              <div key={p.internalId} onClick={() => { setSelectedPolygonId(p.internalId); setActiveTab('edit'); }} className={`p-2 border rounded cursor-pointer mb-1 text-xs text-gray-500 ${selectedPolygonId === p.internalId ? 'border-indigo-500 bg-indigo-50' : 'hover:bg-gray-50'}`}>
-                 名称未設定 <span className="ml-1 opacity-70">({calculateArea(p.geometry)}a)</span>
+              <div 
+                key={p.internalId} 
+                onClick={() => {
+                  if (isMultiSelectMode && !isGuestMode) {
+                    toggleSelectPolygon(p.internalId);
+                  } else {
+                    setSelectedPolygonId(p.internalId); 
+                    setActiveTab('edit'); 
+                  }
+                }} 
+                className={`p-2.5 border rounded-xl cursor-pointer mb-1 text-xs transition flex items-center justify-between ${
+                  isMultiSelectMode && selectedPolygonIds.includes(p.internalId)
+                    ? 'border-amber-500 bg-amber-50 shadow-sm'
+                    : selectedPolygonId === p.internalId
+                      ? 'border-indigo-500 bg-indigo-50/70 shadow'
+                      : 'hover:bg-slate-50 text-slate-500 border-slate-100'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  {isMultiSelectMode && !isGuestMode && (
+                    selectedPolygonIds.includes(p.internalId) ? <CheckSquare size={12} className="text-amber-600" /> : <Square size={12} className="text-slate-400" />
+                  )}
+                  <span>名称未設定</span>
+                </div>
+                <span className="text-[10px] opacity-75">({calculateArea(p.geometry)}a)</span>
               </div>
             ))}
           </div>
         )}
 
-        {activeTab === 'edit' && selectedPolygon && (
+        {sidebarTab === 'edit' && selectedPolygon && (
           <div className="space-y-4">
-            <div className="bg-indigo-50 text-indigo-800 p-2 rounded text-sm text-center font-bold mb-4">
-              概算面積: {calculateArea(selectedPolygon.geometry)} a (アール)
+            <div className="bg-indigo-50/70 border border-indigo-100 text-indigo-900 p-3.5 rounded-xl text-center font-extrabold mb-4 flex flex-col justify-center">
+              <span className="text-[10px] text-indigo-500 font-bold uppercase tracking-wider">実測面積</span>
+              <span className="text-lg">{calculateArea(selectedPolygon.geometry)} a <span className="text-xs font-normal text-slate-500">(アール)</span></span>
             </div>
 
-            {['producerName:生産者名', 'fieldName:通称（圃場名）', 'cropType:作物', 'notes:注意点', 'remarks:備考'].map(f => {
-              const [key, label] = f.split(':');
+            {['producerName:生産者名:例：山田太郎', 'fieldName:通称（圃場名）:例：上野原_10a', 'cropType:作物:例：コシヒカリ', 'notes:注意点・作業指示:例：電線に注意', 'remarks:ステータス/備考:active / planned'].map(f => {
+              const [key, label, placeholder] = f.split(':');
               return (
                 <div key={key}>
-                  <label className="block text-xs text-gray-600 mb-1">{label}</label>
+                  <label className="block text-xs font-bold text-slate-600 mb-1">{label}</label>
                   <div className="flex space-x-2">
-                    <input type="text" value={selectedPolygon[key] || ''} onChange={(e) => setPolygons((prev: any) => prev.map((poly: any) => poly.internalId === selectedPolygonId ? { ...poly, [key]: e.target.value } : poly))} className="w-full border p-2 text-sm rounded-md outline-none focus:border-indigo-500" />
+                    <input 
+                      type="text" 
+                      value={selectedPolygon[key] || ''} 
+                      placeholder={placeholder}
+                      readOnly={isGuestMode}
+                      onChange={(e) => setPolygons((prev: any) => prev.map((poly: any) => poly.internalId === selectedPolygonId ? { ...poly, [key]: e.target.value } : poly))} 
+                      className={`w-full border p-2.5 text-sm rounded-xl outline-none focus:border-indigo-500 ${isGuestMode ? 'bg-slate-100 text-slate-600 border-slate-200' : 'bg-slate-50/30'}`} 
+                    />
                     
-                    {/* 圃場名の自動入力ボタン */}
-                    {key === 'fieldName' && (
-                      <button onClick={autoGenerateName} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 text-xs rounded-md whitespace-nowrap transition-colors border shadow-sm">
+                    {key === 'fieldName' && !isGuestMode && (
+                      <button onClick={autoGenerateName} className="px-3.5 py-1 bg-slate-100 hover:bg-slate-200 border text-xs font-bold rounded-xl whitespace-nowrap transition shadow-sm">
                         自動入力
                       </button>
                     )}
@@ -91,23 +350,116 @@ export default function Sidebar({ polygons, points, setPolygons, setPoints, sele
                 </div>
               );
             })}
+
+            {/* Googleマップ連携ボタンセクション */}
+            {centroid && (
+              <div className="pt-4 border-t border-slate-100 space-y-2.5">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">外部マップ連携</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <a 
+                    href={googleMapUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-1 bg-white hover:bg-slate-50 text-slate-700 font-bold py-2.5 px-3 border rounded-xl text-xs transition shadow-sm"
+                  >
+                    <ExternalLink size={12} />
+                    マップで開く
+                  </a>
+                  <a 
+                    href={googleDirUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold py-2.5 px-3 rounded-xl text-xs transition shadow-sm"
+                  >
+                    <Navigation size={12} />
+                    経路案内
+                  </a>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        {activeTab === 'points' && selectedPolygon && (
+        {sidebarTab === 'points' && selectedPolygon && (
           <div className="space-y-4">
-            <button onClick={() => setIsAddingPoint(!isAddingPoint)} className={`w-full py-2 px-4 rounded-md text-sm font-medium flex items-center justify-center border transition-colors ${isAddingPoint ? 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}>
-              <Target size={16} className="mr-2" /> {isAddingPoint ? 'キャンセル（地図クリック待ち）' : '地図上でポイント追加'}
-            </button>
-            {relatedPoints.map((pt: any) => (
-              <div key={pt.id} className="p-3 bg-gray-50 border rounded-md mb-2">
-                <div className="font-bold text-sm mb-2 text-indigo-700">{pt.pointType}</div>
-                <input type="text" value={pt.name} onChange={(e) => setPoints((prev: any) => prev.map((p: any) => p.id === pt.id ? {...p, name: e.target.value} : p))} className="w-full text-xs p-1.5 border rounded mb-2" placeholder="名称" />
-                <div className="text-right">
-                  <button onClick={() => setPoints((prev: any) => prev.filter((p: any) => p.id !== pt.id))} className="text-xs text-red-500 hover:underline">削除</button>
-                </div>
-              </div>
-            ))}
+            {/* 地図クリック追加 (ゲストは非表示) */}
+            {!isGuestMode && (
+              <>
+                <button 
+                  onClick={() => setIsAddingPoint(!isAddingPoint)} 
+                  className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center border transition shadow-sm ${
+                    isAddingPoint 
+                      ? 'bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-100' 
+                      : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'
+                  }`}
+                >
+                  <Target size={14} className="mr-2" /> 
+                  {isAddingPoint ? '地図クリック待ち（キャンセル）' : '地図上をクリックしてピン追加'}
+                </button>
+
+                {/* GPS現在地から追加 */}
+                <button 
+                  onClick={addPointAtGps} 
+                  disabled={!gpsPosition}
+                  className="w-full py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center border bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:hover:bg-emerald-600 transition shadow-sm"
+                >
+                  <MapPin size={14} className="mr-2" />
+                  現在位置にピンを追加
+                </button>
+                {!gpsPosition && (
+                  <p className="text-[10px] text-slate-400 text-center">※GPS現在地取得（ON）の時のみ有効です</p>
+                )}
+              </>
+            )}
+
+            <div className="pt-2 border-t border-slate-100">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">圃場内の重要地点 ({relatedPoints.length})</p>
+              {relatedPoints.length === 0 ? (
+                <p className="text-xs text-slate-400 italic">登録済みのピンはありません。</p>
+              ) : (
+                relatedPoints.map((pt: any) => (
+                  <div key={pt.id} className="p-3 bg-slate-50 border border-slate-100 rounded-xl mb-2 hover:shadow-sm transition">
+                    <div className="flex justify-between items-center mb-1">
+                      {isGuestMode ? (
+                        <span className="text-xs font-bold text-indigo-700 bg-white border border-slate-100 rounded px-2 py-0.5">{pt.pointType}</span>
+                      ) : (
+                        <select 
+                          value={pt.pointType} 
+                          onChange={(e) => setPoints((prev: any) => prev.map((p: any) => p.id === pt.id ? {...p, pointType: e.target.value as any} : p))}
+                          className="text-xs font-bold text-indigo-700 bg-white border rounded px-1.5 py-0.5 outline-none focus:border-indigo-500"
+                        >
+                          <option value="入口">入口</option>
+                          <option value="駐車場所">駐車場所</option>
+                          <option value="水口">水口</option>
+                          <option value="水尻">水尻</option>
+                          <option value="危険箇所">危険箇所</option>
+                          <option value="その他">その他</option>
+                        </select>
+                      )}
+                      {!isGuestMode && (
+                        <button onClick={() => setPoints((prev: any) => prev.filter((p: any) => p.id !== pt.id))} className="text-[10px] text-rose-500 hover:underline font-semibold">削除</button>
+                      )}
+                    </div>
+                    <input 
+                      type="text" 
+                      value={pt.name} 
+                      readOnly={isGuestMode}
+                      onChange={(e) => setPoints((prev: any) => prev.map((p: any) => p.id === pt.id ? {...p, name: e.target.value} : p))} 
+                      className={`w-full text-xs p-2 border rounded-lg bg-white outline-none focus:border-indigo-500 ${isGuestMode ? 'bg-slate-100 border-none text-slate-700' : ''}`} 
+                      placeholder="地点名称" 
+                    />
+                    <input 
+                      type="text" 
+                      value={pt.description || ''} 
+                      readOnly={isGuestMode}
+                      onChange={(e) => setPoints((prev: any) => prev.map((p: any) => p.id === pt.id ? {...p, description: e.target.value} : p))} 
+                      className={`w-full text-[10px] mt-1.5 p-1.5 border rounded-lg bg-white outline-none focus:border-indigo-500 ${isGuestMode ? 'bg-slate-100 border-none text-slate-500' : ''}`} 
+                      placeholder="補足説明" 
+                    />
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         )}
       </div>
