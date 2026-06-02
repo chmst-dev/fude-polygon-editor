@@ -245,6 +245,15 @@ export default function MainApp() {
             if (selectedPolygonId === id) {
               setSelectedPolygonId(saved.internalId);
             }
+            
+            // 【バグ修正】: 関連する未保存ポイントの fieldInternalId も新しいUUIDに更新する
+            setPoints(prevPts => prevPts.map(pt => 
+              pt.fieldInternalId === id ? { ...pt, fieldInternalId: saved.internalId } : pt
+            ));
+            // prevRefも追従更新（差分検知で不整合を起こさないため）
+            prevPointsRef.current = prevPointsRef.current.map(pt => 
+              pt.fieldInternalId === id ? { ...pt, fieldInternalId: saved.internalId } : pt
+            );
           }
         } catch (e) {
           console.error('Auto-save field failed:', e);

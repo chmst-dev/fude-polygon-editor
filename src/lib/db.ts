@@ -13,6 +13,8 @@ export interface FieldService {
   groupPolygons(polygonIds: string[], fieldData: any): Promise<any>;
   // 地図の表示範囲内の未着手筆ポリゴンをDBから取得する（ビューポートベース読み込み）
   getSourcePolygonsInBbox(west: number, south: number, east: number, north: number): Promise<any[]>;
+  uploadPointImage?(file: File, pointId: string): Promise<string>;
+  getProducers?(): Promise<string[]>;
 }
 
 
@@ -115,6 +117,27 @@ export class SupabaseService implements FieldService {
         }
       };
     });
+  }
+
+  async getProducers(): Promise<string[]> {
+    await this.isOnline();
+    if (!this.userOrgId) return [];
+
+    const { data, error } = await supabase
+      .from('fields')
+      .select('producer_name')
+      .eq('organization_id', this.userOrgId)
+      .not('producer_name', 'is', null)
+      .neq('producer_name', '');
+    
+    if (error) {
+      console.error('Error fetching producers:', error);
+      return [];
+    }
+
+    // 重複を排除したリストを返す
+    const producers = data.map((d: any) => d.producer_name);
+    return Array.from(new Set(producers)).sort();
   }
 
   async saveField(field: any) {
@@ -229,8 +252,9 @@ export class SupabaseService implements FieldService {
       id: pt.id,
       fieldInternalId: pt.field_id,
       pointType: pt.point_type,
-      name: pt.name,
+      name: pt.name || pt.point_type, // nameがなければpointTypeを表示
       description: pt.description || '',
+      imageUrl: pt.image_url || null,
       coordinates: pt.geom.coordinates
     }));
   }
@@ -252,8 +276,9 @@ export class SupabaseService implements FieldService {
     const dbPoint = {
       field_id: point.fieldInternalId,
       point_type: point.pointType,
-      name: point.name,
+      name: point.name || point.pointType,
       description: point.description,
+      image_url: point.imageUrl,
       geom: geom
     };
 
@@ -282,6 +307,24 @@ export class SupabaseService implements FieldService {
       const { error } = await supabase.from('field_points').delete().eq('id', pointId);
       if (error) throw error;
     }
+  }
+
+  async uploadPointImage(file: File, pointId: string): Promise<string> {
+    await this.isOnline();
+    const ext = file.name.split('.').pop();
+    const fileName = `${pointId}-${Date.now()}.${ext}`;
+
+    const { error } = await supabase.storage
+      .from('point_images')
+      .upload(fileName, file, { upsert: true });
+
+    if (error) throw error;
+
+    const { data } = supabase.storage
+      .from('point_images')
+      .getPublicUrl(fileName);
+
+    return data.publicUrl;
   }
 
   async groupPolygons(polygonIds: string[], fieldData: any) {
@@ -527,8 +570,12 @@ export class GuestService extends SupabaseService {
     throw new Error('閲覧専用モードのため、結合グループ化はできません。');
   }
 
-  // ゲストも筆ポリゴン（source_polygons）は閲覧可能 → 親クラスの実装をそのまま使用
-  // getSourcePolygonsInBbox は SupabaseService から継承
+  // ゲストも筆ポリゴン（source_polygons）は閲覧可能 → 親クラスの実装をそのまま使用...とはせず、
+  // 共有URLでは登録済みの圃場（fields）だけを見せるという要件のため、
+  // 未着手のマスタデータ（source_polygons単体）は取得しない（空配列を返す）ようにオーバーライドする
+  async getSourcePolygonsInBbox(_west: number, _south: number, _east: number, _north: number): Promise<any[]> {
+    return [];
+  }
 }
 
 const getQueryParam = (name: string): string | null => {

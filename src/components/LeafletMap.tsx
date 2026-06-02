@@ -3,6 +3,17 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { MapContainer, TileLayer, GeoJSON, Marker, Popup, useMapEvents, useMap, LayersControl } from 'react-leaflet';
 import L from 'leaflet';
 import { v4 as uuidv4 } from 'uuid';
+import 'leaflet/dist/leaflet.css';
+
+// 文字列から一意の色（HSL）を生成するユーティリティ関数
+function stringToHslColor(str: string, s: number, l: number) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const h = Math.abs(hash) % 360;
+  return `hsl(${h}, ${s}%, ${l}%)`;
+}
 
 const createCustomIcon = (type: string, color: string = '#3b82f6') => L.divIcon({ 
   className: 'custom-div-icon', 
@@ -245,11 +256,23 @@ export default function LeafletMap({
           style={(f: any) => {
             const isSelected = f.properties.internalId === selectedPolygonId;
             const isMultiSelected = selectedPolygonIds.includes(f.properties.internalId);
+            
+            let baseColor = '#10b981'; // 登録済み（デフォルト/名称なし）
+            let borderColor = '#047857';
+            
+            if (f.properties.properties?.isUnmapped) {
+              baseColor = '#94a3b8'; // 未着手
+              borderColor = '#64748b';
+            } else if (f.properties.producerName) {
+              baseColor = stringToHslColor(f.properties.producerName, 55, 60);
+              borderColor = stringToHslColor(f.properties.producerName, 70, 40);
+            }
+
             return {
-              fillColor: isSelected ? '#4f46e5' : isMultiSelected ? '#f59e0b' : '#10b981', 
+              fillColor: isSelected ? '#4f46e5' : isMultiSelected ? '#f59e0b' : baseColor, 
               weight: isSelected || isMultiSelected ? 3 : 1, 
-              color: isSelected ? '#312e81' : isMultiSelected ? '#d97706' : '#047857', 
-              fillOpacity: isSelected ? 0.6 : isMultiSelected ? 0.5 : 0.2
+              color: isSelected ? '#312e81' : isMultiSelected ? '#d97706' : borderColor, 
+              fillOpacity: isSelected ? 0.6 : isMultiSelected ? 0.5 : 0.3
             };
           }} 
           onEachFeature={(f: any, l: any) => l.on({ 
@@ -272,8 +295,13 @@ export default function LeafletMap({
       {points.map((pt: any) => (
         <Marker key={pt.id} position={[pt.coordinates[1], pt.coordinates[0]]} icon={createCustomIcon(pt.pointType, getPointColor(pt.pointType))}>
           <Popup>
-            <div className="font-bold p-1 text-sm">{pt.name} <span className="text-xs text-slate-500 font-normal">({pt.pointType})</span></div>
-            {pt.description && <div className="text-xs text-slate-600 mt-1">{pt.description}</div>}
+            <div className="font-bold p-1 text-sm">{pt.pointType} {pt.name && pt.name !== pt.pointType ? `(${pt.name})` : ''}</div>
+            {pt.imageUrl && (
+              <div className="mt-1 w-full max-w-[200px] overflow-hidden rounded shadow-sm border border-slate-200">
+                <img src={pt.imageUrl} alt={pt.pointType} className="w-full h-auto object-cover" />
+              </div>
+            )}
+            {pt.description && <div className="text-xs text-slate-600 mt-1.5">{pt.description}</div>}
           </Popup>
         </Marker>
       ))}

@@ -1,8 +1,9 @@
 'use client';
-import React, { useState } from 'react';
-import { Target, Search, CheckSquare, Square, Layers, Navigation, ExternalLink, MapPin } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Target, Search, CheckSquare, Square, Layers, Navigation, ExternalLink, MapPin, Camera, Save, Loader2 } from 'lucide-react';
 import { calculateArea } from '@/lib/utils';
 import * as turf from '@turf/turf';
+import imageCompression from 'browser-image-compression';
 
 export default function Sidebar({ 
   polygons, 
@@ -36,6 +37,17 @@ export default function Sidebar({
   const [groupFieldName, setGroupFieldName] = useState('');
   const [groupCrop, setGroupCrop] = useState('');
   const [showGroupForm, setShowGroupForm] = useState(false);
+
+  // 生産者名サジェスト用
+  const [producers, setProducers] = useState<string[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [uploadingImageId, setUploadingImageId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (dbService?.getProducers && !dbService.isReadOnly()) {
+      dbService.getProducers().then(setProducers).catch(console.error);
+    }
+  }, [dbService]);
 
   const selectedPolygon = polygons.find((p: any) => p.internalId === selectedPolygonId);
   const relatedPoints = points.filter((p: any) => p.fieldInternalId === selectedPolygonId);
@@ -89,14 +101,15 @@ export default function Sidebar({
       alert("現在位置が取得できていません。GPS精度を確認してください。");
       return;
     }
-    setPoints((prev: any) => [
+      setPoints((prev: any) => [
       ...prev,
       {
         id: `point-${Date.now()}`,
         fieldInternalId: selectedPolygonId,
         pointType: "入口",
-        name: "GPS現在地",
-        description: "現在地より追加",
+        name: "入口",
+        description: "",
+        imageUrl: null,
         coordinates: [gpsPosition.lng, gpsPosition.lat]
       }
     ]);
@@ -176,6 +189,74 @@ export default function Sidebar({
     }
   };
 
+  const handleSaveField = async () => {
+    if (!dbService || isGuestMode || !selectedPolygon) return;
+    setIsSaving(true);
+    try {
+      const fieldData = {
+        ...selectedPolygon,
+        _localGeometries: polygons.reduce((acc: any, curr: any) => {
+          if (curr.internalId) acc[curr.internalId] = curr;
+          return acc;
+        }, {})
+      };
+      const saved = await dbService.saveField(fieldData);
+      
+      // 保存したデータでステートを更新
+      setPolygons((prev: any) => prev.map((p: any) => p.internalId === selectedPolygonId ? saved : p));
+      
+      if (saved.internalId !== selectedPolygonId) {
+        setSelectedPolygonId(saved.internalId);
+        setPoints((prev: any) => prev.map((pt: any) => pt.fieldInternalId === selectedPolygonId ? { ...pt, fieldInternalId: saved.internalId } : pt));
+      }
+      alert('圃場情報を保存しました。');
+      
+      // 生産者リストも更新しておく
+      if (dbService.getProducers) {
+        dbService.getProducers().then(setProducers);
+      }
+    } catch (e: any) {
+      alert('保存に失敗しました: ' + e.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, pointId: string) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    if (!dbService?.uploadPointImage) {
+      alert('画像アップロード機能が利用できません。');
+      return;
+    }
+    
+    setUploadingImageId(pointId);
+    try {
+      const options = {
+        maxSizeMB: 1, // 最大1MBに圧縮
+        maxWidthOrHeight: 1200,
+        useWebWorker: true
+      };
+      
+      const compressedFile = await imageCompression(file, options);
+      const url = await dbService.uploadPointImage(compressedFile, pointId);
+      
+      // state 更新
+      setPoints((prev: any) => prev.map((p: any) => p.id === pointId ? { ...p, imageUrl: url } : p));
+      
+      // 画像更新したポイントをすぐに保存する
+      const updatedPoint = points.find((p: any) => p.id === pointId);
+      if (updatedPoint) {
+         dbService.savePoint({ ...updatedPoint, imageUrl: url }).catch(console.error);
+      }
+    } catch (error: any) {
+      console.error(error);
+      alert('画像のアップロードに失敗しました。');
+    } finally {
+      setUploadingImageId(null);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full pr-2">
       {/* タブヘッダー (PCでは常に表示、スマホ時は下部タブナビと連動するため折りたたまれてもよいが、上部切り替えとしても機能させます) */}
@@ -186,6 +267,13 @@ export default function Sidebar({
       </div>
       
       <div className="flex-1 overflow-y-auto p-3 md:p-4 border-r bg-white">
+        {/* datalist (オートコンプリート用) */}
+        <datalist id="producers-list">
+          {producers.map((prod, i) => (
+            <option key={i} value={prod} />
+          ))}
+        </datalist>
+
         {sidebarTab === 'list' && (
           <div>
             {/* 複数選択トグルエリア (ゲスト閲覧時は非表示にします) */}
@@ -337,6 +425,7 @@ export default function Sidebar({
                       value={selectedPolygon[key] || ''} 
                       placeholder={placeholder}
                       readOnly={isGuestMode}
+                      list={key === 'producerName' ? 'producers-list' : undefined}
                       onChange={(e) => setPolygons((prev: any) => prev.map((poly: any) => poly.internalId === selectedPolygonId ? { ...poly, [key]: e.target.value } : poly))} 
                       className={`w-full border p-2.5 text-sm rounded-xl outline-none focus:border-indigo-500 ${isGuestMode ? 'bg-slate-100 text-slate-600 border-slate-200' : 'bg-slate-50/30'}`} 
                     />
@@ -350,6 +439,18 @@ export default function Sidebar({
                 </div>
               );
             })}
+
+            {/* 明示的な保存ボタン */}
+            {!isGuestMode && (
+              <button 
+                onClick={handleSaveField}
+                disabled={isSaving}
+                className="w-full mt-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl transition shadow-md flex items-center justify-center disabled:opacity-50"
+              >
+                {isSaving ? <Loader2 size={18} className="animate-spin mr-2" /> : <Save size={18} className="mr-2" />}
+                {isSaving ? '保存中...' : 'この圃場を保存する'}
+              </button>
+            )}
 
             {/* Googleマップ連携ボタンセクション */}
             {centroid && (
@@ -440,14 +541,32 @@ export default function Sidebar({
                         <button onClick={() => setPoints((prev: any) => prev.filter((p: any) => p.id !== pt.id))} className="text-[10px] text-rose-500 hover:underline font-semibold">削除</button>
                       )}
                     </div>
-                    <input 
-                      type="text" 
-                      value={pt.name} 
-                      readOnly={isGuestMode}
-                      onChange={(e) => setPoints((prev: any) => prev.map((p: any) => p.id === pt.id ? {...p, name: e.target.value} : p))} 
-                      className={`w-full text-xs p-2 border rounded-lg bg-white outline-none focus:border-indigo-500 ${isGuestMode ? 'bg-slate-100 border-none text-slate-700' : ''}`} 
-                      placeholder="地点名称" 
-                    />
+                    
+                    {/* 地点名称のフリーテキスト入力を削除し、代わりに画像表示/アップロード枠に変更 */}
+                    {pt.imageUrl && (
+                      <div className="mb-2 w-full rounded-lg overflow-hidden border border-slate-200">
+                        <img src={pt.imageUrl} alt={pt.pointType} className="w-full h-auto object-cover max-h-32" />
+                      </div>
+                    )}
+                    
+                    {!isGuestMode && (
+                      <div className="mb-2">
+                        <label className="cursor-pointer flex items-center justify-center w-full p-2 border-2 border-dashed border-slate-300 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-100 hover:border-slate-400 transition bg-white">
+                          {uploadingImageId === pt.id ? (
+                            <><Loader2 size={14} className="animate-spin mr-1" /> 画像圧縮・アップロード中...</>
+                          ) : (
+                            <><Camera size={14} className="mr-1" /> {pt.imageUrl ? '画像を変更' : '写真を追加'}</>
+                          )}
+                          <input 
+                            type="file" 
+                            accept="image/*" 
+                            className="hidden" 
+                            onChange={(e) => handleImageUpload(e, pt.id)}
+                            disabled={uploadingImageId === pt.id}
+                          />
+                        </label>
+                      </div>
+                    )}
                     <input 
                       type="text" 
                       value={pt.description || ''} 
