@@ -253,12 +253,27 @@ export class SupabaseService implements FieldService {
       if (pt.geom && typeof pt.geom === 'object' && pt.geom.coordinates) {
         coords = pt.geom.coordinates;
       } else if (typeof pt.geom === 'string') {
-        // もし PostgREST が WKT 文字列等を返してきた場合の簡易パース (POINT(139.7 35.6))
         const match = pt.geom.match(/POINT\s*\(\s*([-\d.]+)\s+([-\d.]+)\s*\)/i);
         if (match) {
           coords = [parseFloat(match[1]), parseFloat(match[2])];
-        } else {
-          console.warn('Unexpected geom string format:', pt.geom);
+        } else if (pt.geom.match(/^[0-9A-Fa-f]+$/)) {
+          // EWKB hex パース
+          try {
+            const buf = new Uint8Array(pt.geom.match(/[\da-f]{2}/gi)?.map((h: string) => parseInt(h, 16)) || []);
+            const view = new DataView(buf.buffer);
+            const littleEndian = buf[0] === 1;
+            const type = view.getUint32(1, littleEndian);
+            const hasSRID = (type & 0x20000000) !== 0;
+            let offset = 5;
+            if (hasSRID) offset += 4;
+            if (offset + 16 <= buf.length) {
+              const x = view.getFloat64(offset, littleEndian);
+              const y = view.getFloat64(offset + 8, littleEndian);
+              coords = [x, y];
+            }
+          } catch (e) {
+            console.error('EWKB parse error:', e);
+          }
         }
       }
 
@@ -276,6 +291,7 @@ export class SupabaseService implements FieldService {
 
   async savePoint(point: any) {
     await this.isOnline();
+    if (!this.userId || !this.userOrgId) throw new Error('Not logged in');
     
     // 関連する fieldId が一時的な poly- のままであれば、まだ fields が作成されていないため、
     // point の保存は fields の作成完了まで保留します
@@ -283,11 +299,8 @@ export class SupabaseService implements FieldService {
       return point;
     }
 
-    // Supabase (PostgREST) は geometry 型に対して GeoJSON オブジェクトを直接受け付ける設定になっている可能性が高いため戻す
-    const geom = {
-      type: 'Point',
-      coordinates: point.coordinates
-    };
+    // PostGIS に確実に保存されるよう、GeoJSON オブジェクトではなく WKT (Well-Known Text) を使用
+    const geomWkt = `POINT(${point.coordinates[0]} ${point.coordinates[1]})`;
 
     const dbPoint = {
       field_id: point.fieldInternalId,
@@ -295,7 +308,7 @@ export class SupabaseService implements FieldService {
       name: point.name || point.pointType,
       description: point.description,
       image_url: point.imageUrl,
-      geom: geom
+      geom: geomWkt
     };
 
     if (point.id && !point.id.startsWith('point-')) {
