@@ -6,9 +6,11 @@ import { parseGeoJSON, exportToCSV, exportToGeoJSON, exportToKML } from '@/lib/u
 import { DbServiceFactory, FieldService } from '@/lib/db';
 import { supabase } from '@/lib/supabase';
 import AuthModal from './AuthModal';
-import { User, LogOut, Cloud, Navigation, Compass, Search, Target } from 'lucide-react';
+import { ToastProvider, useToast } from './Toast';
+import { User, LogOut, Cloud, Navigation, Compass, Search, Target, MapPin, X, ChevronDown } from 'lucide-react';
 
-export default function MainApp() {
+// 内部実装コンポーネント（ToastProviderでラップするために分離）
+function MainAppInner() {
   const [polygons, setPolygons] = useState<any[]>([]);
   const [points, setPoints] = useState<any[]>([]);
   const [selectedPolygonId, setSelectedPolygonId] = useState<string | null>(null);
@@ -27,6 +29,13 @@ export default function MainApp() {
   // 認証とDBサービスの状態
   const [dbService, setDbService] = useState<FieldService | null>(null);
   const [user, setUser] = useState<any>(null);
+
+  // URLパラメータから初期ゲスト判定を行う（DB初期化前の高速適用のため）
+  const isGuestByUrl = typeof window !== 'undefined' && (new URLSearchParams(window.location.search).has('org') || new URLSearchParams(window.location.search).has('share'));
+
+  // 閲覧専用ゲストモードかどうか
+  const isGuestMode = dbService?.isReadOnly() || isGuestByUrl;
+  const orgId = user?.profile?.organization_id || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('org') : null);
 
   // スマホレスポンシブ用のステート
   const [isMobile, setIsMobile] = useState(false);
@@ -56,12 +65,12 @@ export default function MainApp() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // 圃場選択時にスマホでは自動で編集タブに遷移
+  // 圃場選択時にスマホでは自動で編集タブに遷移（編集権限がある場合のみ）
   useEffect(() => {
-    if (selectedPolygonId && isMobile) {
+    if (selectedPolygonId && isMobile && !isGuestMode) {
       setMobileTab('edit');
     }
-  }, [selectedPolygonId, isMobile]);
+  }, [selectedPolygonId, isMobile, isGuestMode]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -81,6 +90,7 @@ export default function MainApp() {
   }, []);
 
   // GPS追跡用の位置情報ハンドリング
+  const toast = useToast();
   useEffect(() => {
     if (isTrackingGps) {
       if ('geolocation' in navigator) {
@@ -93,13 +103,13 @@ export default function MainApp() {
           },
           (error) => {
             console.error('GPS error:', error);
-            alert('現在地の取得に失敗しました。GPS権限が許可されているか確認してください。');
+            toast.error('現在地の取得に失敗しました。GPS権限が許可されているか確認してください。');
             setIsTrackingGps(false);
           },
           { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
         );
       } else {
-        alert('このデバイスはGPS位置情報取得に対応していません。');
+        toast.error('このデバイスはGPS位置情報取得に対応していません。');
         setIsTrackingGps(false);
       }
     } else {
@@ -146,6 +156,15 @@ export default function MainApp() {
       console.error('Bbox fetch error:', e);
     }
   }, [dbService]);
+
+  // 「地図で場所を確認」ボタン押下時に現在のビューポートのポリゴンを強制読み込みする関数
+  // LeafletMapが地図タブ表示時に invalidateSize を値変化で知らせるためのトリガーカウンター
+  const [forceRefreshMap, setForceRefreshMap] = useState(0);
+
+  const handleShowMap = useCallback(() => {
+    // invalidateSizeトリガー（値が変わればMapAreaに伝わり地図を再描画する）
+    setForceRefreshMap(c => c + 1);
+  }, []);
 
   // DBサービス初期化とDBが変わったらキャッシュをリセット
   const initDb = useCallback(async () => {
@@ -338,13 +357,36 @@ export default function MainApp() {
     if (user?.profile?.organization_id) {
       const shareUrl = `${window.location.origin}/?org=${user.profile.organization_id}`;
       navigator.clipboard.writeText(shareUrl)
-        .then(() => alert('閲覧用の共有URLをコピーしました！ログイン不要でマップを共有できます。'))
-        .catch(() => alert('コピーに失敗しました。次のURLをコピーしてください:\n' + shareUrl));
+        .then(() => toast.success('閲覧用の共有URLをコピーしました！ログイン不要でマップを共有できます。'))
+        .catch(() => toast.error('コピーに失敗しました。' + shareUrl));
     }
   };
 
-  // 閲覧専用ゲストモードかどうか
-  const isGuestMode = dbService?.isReadOnly() || false;
+
+
+  // ゲスト閲覧用情報パネルのステート
+  const [infoPanelPolygon, setInfoPanelPolygon] = useState<any>(null);
+  const [infoPanelPoint, setInfoPanelPoint] = useState<any>(null);
+
+  const handleGuestFieldClick = useCallback((polygonId: string) => {
+    const polygon = polygons.find((p: any) => p.internalId === polygonId);
+    if (polygon) {
+      setInfoPanelPolygon(polygon);
+      setInfoPanelPoint(null);
+      setSelectedPolygonId(polygonId);
+    }
+  }, [polygons]);
+
+  const handleGuestPointClick = useCallback((point: any) => {
+    setInfoPanelPoint(point);
+    setInfoPanelPolygon(null);
+  }, []);
+
+
+  // ページタイトルをモードに応じて動的に設定
+  useEffect(() => {
+    document.title = isGuestMode ? 'みんなの圃場マップ' : '共同編集システム';
+  }, [isGuestMode]);
 
   // DB初期化待ち状態を考慮
   if (!dbService) {
@@ -356,12 +398,13 @@ export default function MainApp() {
     return <AuthModal onSuccess={() => initDb()} />;
   }
 
+
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
       <header className="bg-white border-b px-4 py-3 flex items-center justify-between shrink-0 shadow-sm" style={{ zIndex: 1000 }}>
         <div className="flex items-center space-x-2 md:space-x-4">
           <h1 className="font-bold text-indigo-700 flex items-center gap-1.5 text-sm md:text-base">
-            圃場地図
+            {isGuestMode ? 'みんなの圃場マップ' : '共同編集システム'}
           </h1>
           
 
@@ -462,6 +505,8 @@ export default function MainApp() {
             setIsMultiSelectMode={setIsMultiSelectMode}
             gpsPosition={gpsPosition}
             isMobile={isMobile}
+            onShowMap={handleShowMap}
+            orgId={orgId}
             activeTabOverride={isMobile ? mobileTab : undefined}
             setActiveTabOverride={isMobile ? setMobileTab : undefined}
           />
@@ -488,6 +533,10 @@ export default function MainApp() {
               isMultiSelectMode={isMultiSelectMode}
               gpsPosition={gpsPosition}
               onBoundsChange={onMapBoundsChange}
+              forceRefresh={forceRefreshMap}
+              isGuestMode={isGuestMode}
+              onGuestFieldClick={isGuestMode ? handleGuestFieldClick : undefined}
+              onGuestPointClick={isGuestMode ? handleGuestPointClick : undefined}
             />
           </div>
 
@@ -525,26 +574,145 @@ export default function MainApp() {
             <Search size={18} className="mb-0.5" />
             一覧
           </button>
-          <button 
-            disabled={!selectedPolygonId}
-            onClick={() => setMobileTab('edit')} 
-            className={`flex flex-col items-center justify-center flex-1 py-1 text-[10px] font-bold transition-all disabled:opacity-30 ${mobileTab === 'edit' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
-          >
-            <User size={18} className="mb-0.5" />
-            編集
-          </button>
-          <button 
-            disabled={!selectedPolygonId}
-            onClick={() => setMobileTab('points')} 
-            className={`flex flex-col items-center justify-center flex-1 py-1 text-[10px] font-bold transition-all disabled:opacity-30 ${mobileTab === 'points' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
-          >
-            <Target size={18} className="mb-0.5" />
-            ポイント
-          </button>
+          {!isGuestMode && (
+            <>
+              <button 
+                disabled={!selectedPolygonId}
+                onClick={() => setMobileTab('edit')} 
+                className={`flex flex-col items-center justify-center flex-1 py-1 text-[10px] font-bold transition-all disabled:opacity-30 ${mobileTab === 'edit' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
+              >
+                <User size={18} className="mb-0.5" />
+                編集
+              </button>
+              <button 
+                disabled={!selectedPolygonId}
+                onClick={() => setMobileTab('points')} 
+                className={`flex flex-col items-center justify-center flex-1 py-1 text-[10px] font-bold transition-all disabled:opacity-30 ${mobileTab === 'points' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
+              >
+                <Target size={18} className="mb-0.5" />
+                ポイント
+              </button>
+            </>
+          )}
         </div>
       )}
 
+      {/* ゲスト閲覧用情報パネル（画面下部スライドアップ） */}
+      {isGuestMode && (infoPanelPolygon || infoPanelPoint) && (
+        <div
+          className="fixed bottom-16 md:bottom-0 left-0 right-0 z-[2000] pointer-events-none flex justify-center px-2 pb-2"
+        >
+          <div className="pointer-events-auto w-full max-w-lg bg-white/98 backdrop-blur-xl border border-slate-200 rounded-2xl shadow-2xl p-4 animate-slide-up">
+            {infoPanelPolygon ? (
+              <>
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-indigo-100 flex items-center justify-center">
+                      <MapPin size={16} className="text-indigo-600" />
+                    </div>
+                    <div>
+                      <p className="font-extrabold text-slate-900 text-sm">
+                        {infoPanelPolygon.fieldName || infoPanelPolygon.producerName || '名称未設定'}
+                      </p>
+                      {infoPanelPolygon.producerName && (
+                        <p className="text-[11px] text-slate-500 font-medium">{infoPanelPolygon.producerName}</p>
+                      )}
+                    </div>
+                  </div>
+                  <button onClick={() => setInfoPanelPolygon(null)} className="text-slate-400 hover:text-slate-700 transition p-1 rounded-lg hover:bg-slate-100">
+                    <X size={16} />
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-2 mb-3">
+                  {infoPanelPolygon.cropType && (
+                    <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-2 text-center">
+                      <p className="text-[9px] font-bold text-emerald-600 uppercase tracking-wide">作物</p>
+                      <p className="font-bold text-emerald-900 text-xs mt-0.5">{infoPanelPolygon.cropType}</p>
+                    </div>
+                  )}
+                  {infoPanelPolygon.geometry && (
+                    <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-2 text-center">
+                      <p className="text-[9px] font-bold text-indigo-600 uppercase tracking-wide">面積</p>
+                      <p className="font-bold text-indigo-900 text-xs mt-0.5">
+                        {(() => { try { const a = require('@turf/turf').area(infoPanelPolygon.geometry); return `${(a / 100).toFixed(1)}a`; } catch { return '-'; } })()}
+                      </p>
+                    </div>
+                  )}
+                  {points.filter((p: any) => p.fieldInternalId === infoPanelPolygon.internalId).length > 0 && (
+                    <div className="bg-amber-50 border border-amber-100 rounded-xl p-2 text-center">
+                      <p className="text-[9px] font-bold text-amber-600 uppercase tracking-wide">ポイント</p>
+                      <p className="font-bold text-amber-900 text-xs mt-0.5">{points.filter((p: any) => p.fieldInternalId === infoPanelPolygon.internalId).length}件</p>
+                    </div>
+                  )}
+                </div>
+                {infoPanelPolygon.notes && (
+                  <div className="bg-rose-50 border border-rose-100 rounded-xl px-3 py-2 text-xs text-rose-800 font-medium">
+                    ⚠️ {infoPanelPolygon.notes}
+                  </div>
+                )}
+                {points.filter((p: any) => p.fieldInternalId === infoPanelPolygon.internalId).length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-slate-100">
+                    <p className="text-[10px] font-bold text-slate-400 mb-2">登録ポイント</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {points.filter((p: any) => p.fieldInternalId === infoPanelPolygon.internalId).map((pt: any) => (
+                        <button
+                          key={pt.id}
+                          onClick={() => { setInfoPanelPoint(pt); setInfoPanelPolygon(null); }}
+                          className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 transition"
+                        >
+                          📍 {pt.pointType}{pt.name && pt.name !== pt.pointType ? ` (${pt.name})` : ''}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : infoPanelPoint ? (
+              <>
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-amber-100 flex items-center justify-center">
+                      <MapPin size={16} className="text-amber-600" />
+                    </div>
+                    <div>
+                      <p className="font-extrabold text-slate-900 text-sm">
+                        {infoPanelPoint.pointType}{infoPanelPoint.name && infoPanelPoint.name !== infoPanelPoint.pointType ? ` (${infoPanelPoint.name})` : ''}
+                      </p>
+                      {(() => { const f = polygons.find((p: any) => p.internalId === infoPanelPoint.fieldInternalId); return f ? <p className="text-[11px] text-slate-500">{f.fieldName || f.producerName || '圃場'}</p> : null; })()}
+                    </div>
+                  </div>
+                  <button onClick={() => setInfoPanelPoint(null)} className="text-slate-400 hover:text-slate-700 transition p-1 rounded-lg hover:bg-slate-100">
+                    <X size={16} />
+                  </button>
+                </div>
+                {infoPanelPoint.imageUrl && (
+                  <div className="mb-3 rounded-xl overflow-hidden border border-slate-100">
+                    <img src={infoPanelPoint.imageUrl} alt={infoPanelPoint.pointType} className="w-full h-40 object-cover" />
+                  </div>
+                )}
+                {infoPanelPoint.description && (
+                  <p className="text-xs text-slate-600 bg-slate-50 rounded-xl px-3 py-2 border border-slate-100">{infoPanelPoint.description}</p>
+                )}
+                <button
+                  onClick={() => { const f = polygons.find((p: any) => p.internalId === infoPanelPoint.fieldInternalId); if (f) { setInfoPanelPolygon(f); setInfoPanelPoint(null); } }}
+                  className="mt-3 text-[11px] text-indigo-600 font-bold hover:underline"
+                >
+                  ← 圃場情報に戻る
+                </button>
+              </>
+            ) : null}
+          </div>
+        </div>
+      )}
 
     </div>
+  );
+}
+
+export default function MainApp() {
+  return (
+    <ToastProvider>
+      <MainAppInner />
+    </ToastProvider>
   );
 }

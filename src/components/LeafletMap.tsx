@@ -202,6 +202,20 @@ function ZoomWatcher({ onZoomChange }: { onZoomChange: (z: number) => void }) {
   return null;
 }
 
+// display:none から表示に戻ったとき（タブ切り替えなど）に強制再描画するコンポーネント
+function InvalidateSizeOnForceRefresh({ forceRefresh }: { forceRefresh: number }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!forceRefresh) return; // 初期値(0)では発火しない
+    // 少し遅延を入れてCSSのdisplay変更が完了してから呼ぶ
+    const t = setTimeout(() => {
+      map.invalidateSize();
+    }, 100);
+    return () => clearTimeout(t);
+  }, [forceRefresh, map]);
+  return null;
+}
+
 export default function LeafletMap({ 
   polygons, 
   points, 
@@ -215,6 +229,10 @@ export default function LeafletMap({
   isMultiSelectMode = false,
   gpsPosition = null,
   onBoundsChange,
+  forceRefresh = 0,
+  isGuestMode = false,
+  onGuestFieldClick,
+  onGuestPointClick,
 }: any) {
   // ビューポート内に絞り込まれたポリゴン
   const [visiblePolygons, setVisiblePolygons] = useState<any[]>([]);
@@ -225,7 +243,7 @@ export default function LeafletMap({
   return (
     <div className="relative w-full h-full">
       <MapContainer 
-        center={[36.1308, 139.6019]} 
+        center={[36.0954, 139.5816]}
         zoom={15} 
         style={{ height: '100%', width: '100%', cursor: isAddingPoint ? 'crosshair' : 'grab' }} 
         preferCanvas={true}
@@ -306,7 +324,9 @@ export default function LeafletMap({
             }} 
             onEachFeature={(f: any, l: any) => l.on({ 
               click: () => {
-                if (isMultiSelectMode) {
+                if (isGuestMode && onGuestFieldClick) {
+                  onGuestFieldClick(f.properties.internalId);
+                } else if (isMultiSelectMode) {
                   const id = f.properties.internalId;
                   if (setSelectedPolygonIds) {
                     setSelectedPolygonIds((prev: string[]) => 
@@ -340,16 +360,25 @@ export default function LeafletMap({
         )}
         
         {points.map((pt: any) => (
-          <Marker key={pt.id} position={[pt.coordinates[1], pt.coordinates[0]]} icon={createCustomIcon(pt.pointType, getPointColor(pt.pointType))}>
-            <Popup>
-              <div className="font-bold p-1 text-sm">{pt.pointType} {pt.name && pt.name !== pt.pointType ? `(${pt.name})` : ''}</div>
-              {pt.imageUrl && (
-                <div className="mt-1 w-full max-w-[200px] overflow-hidden rounded shadow-sm border border-slate-200">
-                  <img src={pt.imageUrl} alt={pt.pointType} className="w-full h-auto object-cover" />
-                </div>
-              )}
-              {pt.description && <div className="text-xs text-slate-600 mt-1.5">{pt.description}</div>}
-            </Popup>
+          <Marker 
+            key={pt.id} 
+            position={[pt.coordinates[1], pt.coordinates[0]]} 
+            icon={createCustomIcon(pt.pointType, getPointColor(pt.pointType))}
+            eventHandlers={isGuestMode && onGuestPointClick ? {
+              click: () => onGuestPointClick(pt)
+            } : undefined}
+          >
+            {!isGuestMode && (
+              <Popup>
+                <div className="font-bold p-1 text-sm">{pt.pointType} {pt.name && pt.name !== pt.pointType ? `(${pt.name})` : ''}</div>
+                {pt.imageUrl && (
+                  <div className="mt-1 w-full max-w-[200px] overflow-hidden rounded shadow-sm border border-slate-200">
+                    <img src={pt.imageUrl} alt={pt.pointType} className="w-full h-auto object-cover" />
+                  </div>
+                )}
+                {pt.description && <div className="text-xs text-slate-600 mt-1.5">{pt.description}</div>}
+              </Popup>
+            )}
           </Marker>
         ))}
 
@@ -366,6 +395,7 @@ export default function LeafletMap({
         )}
 
         {onBoundsChange && <BoundsEmitter onBoundsChange={onBoundsChange} />}
+        <InvalidateSizeOnForceRefresh forceRefresh={forceRefresh} />
         <MapEvents isAddingPoint={isAddingPoint} setIsAddingPoint={setIsAddingPoint} selectedPolygonId={selectedPolygonId} setPoints={setPoints} />
         <MapZoomController selectedPolygonId={selectedPolygonId} polygons={polygons} />
       </MapContainer>

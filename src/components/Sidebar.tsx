@@ -1,9 +1,10 @@
 'use client';
-import React, { useState, useEffect } from 'react';
-import { Target, Search, CheckSquare, Square, Layers, Navigation, ExternalLink, MapPin, Camera, Save, Loader2, UploadCloud } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Target, Search, CheckSquare, Square, Layers, Navigation, ExternalLink, MapPin, Camera, Save, Loader2, Clock } from 'lucide-react';
 import { calculateArea } from '@/lib/utils';
 import * as turf from '@turf/turf';
 import imageCompression from 'browser-image-compression';
+import { useToast } from './Toast';
 
 export default function Sidebar({ 
   polygons, 
@@ -21,15 +22,20 @@ export default function Sidebar({
   setIsMultiSelectMode,
   gpsPosition = null,
   isMobile = false,
+  onShowMap,
+  orgId,
   activeTabOverride,
   setActiveTabOverride
 }: any) {
   const [localActiveTab, setLocalActiveTab] = useState<'list' | 'edit' | 'points' | 'map'>('list');
   
-  // スマホの下部ナビとタブの状態を同期
-  const activeTab = activeTabOverride || localActiveTab;
+  // ゲスト閲覧専用モードかチェック
+  const isGuestMode = dbService?.isReadOnly() || false;
+  
+  // スマホの下部ナビとタブの状態を同期（ゲストモードなら強制的に一覧（list）アクティブに固定）
+  const activeTab = isGuestMode ? 'list' : (activeTabOverride || localActiveTab);
   const sidebarTab = activeTab === 'map' ? 'list' : activeTab;
-  const setActiveTab = setActiveTabOverride ? (tab: any) => setActiveTabOverride(tab) : setLocalActiveTab;
+  const setActiveTab = isGuestMode ? () => {} : (setActiveTabOverride ? (tab: any) => setActiveTabOverride(tab) : setLocalActiveTab);
 
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -44,17 +50,74 @@ export default function Sidebar({
   const [isSaving, setIsSaving] = useState(false);
   const [uploadingImageId, setUploadingImageId] = useState<string | null>(null);
 
+  const toast = useToast();
+
   useEffect(() => {
     if (dbService?.getProducers && !dbService.isReadOnly()) {
       dbService.getProducers().then(setProducers).catch(console.error);
     }
   }, [dbService]);
 
+  // 地域名（逆ジオコーディング）と最近見た圃場履歴のステート
+  const [localityName, setLocalityName] = useState<string>('');
+  const [localityLoading, setLocalityLoading] = useState(false);
+  const [recentFieldIds, setRecentFieldIds] = useState<string[]>([]);
+
   const selectedPolygon = polygons.find((p: any) => p.internalId === selectedPolygonId);
   const relatedPoints = points.filter((p: any) => p.fieldInternalId === selectedPolygonId);
 
-  // ゲスト閲覧専用モードかチェック
-  const isGuestMode = dbService?.isReadOnly() || false;
+
+
+  // 選択中圃場が変わったら逆ジオコードィングで地域名取得
+  useEffect(() => {
+    if (!selectedPolygon?.geometry) {
+      setLocalityName('');
+      return;
+    }
+    const centroidCoords = (() => {
+      try {
+        const c = turf.centroid(turf.feature(selectedPolygon.geometry));
+        return c.geometry.coordinates; // [lng, lat]
+      } catch { return null; }
+    })();
+    if (!centroidCoords) return;
+    setLocalityLoading(true);
+    fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${centroidCoords[1]}&lon=${centroidCoords[0]}&format=json&zoom=14&accept-language=ja`,
+      { headers: { 'User-Agent': 'fude-polygon-editor/1.0' } }
+    )
+      .then(r => r.json())
+      .then(data => {
+        const a = data.address || {};
+        // 大字・町・中山間部落など詳細地名を優先度順に取得
+        const locality =
+          a.hamlet || a.quarter || a.neighbourhood ||
+          a.city_district || a.suburb || a.village ||
+          a.town || a.city || '';
+        setLocalityName(locality);
+      })
+      .catch(() => setLocalityName(''))
+      .finally(() => setLocalityLoading(false));
+  }, [selectedPolygonId]); // いぞそこだけ再取得
+
+  // 最近見た圃場履歴をlocalStorageで管理
+  useEffect(() => {
+    if (!orgId) return;
+    const key = `recentFields_${orgId}`;
+    const stored = JSON.parse(localStorage.getItem(key) || '[]');
+    setRecentFieldIds(stored);
+  }, [orgId]);
+
+  useEffect(() => {
+    if (!selectedPolygonId || !orgId) return;
+    const key = `recentFields_${orgId}`;
+    setRecentFieldIds(prev => {
+      const updated = [selectedPolygonId, ...prev.filter(id => id !== selectedPolygonId)].slice(0, 10);
+      localStorage.setItem(key, JSON.stringify(updated));
+      return updated;
+    });
+  }, [selectedPolygonId, orgId]);
+
 
   const isEdited = (p: any) => p.producerName || p.cropType || p.notes || p.remarks || points.some((pt: any) => pt.fieldInternalId === p.internalId);
   
@@ -67,14 +130,24 @@ export default function Sidebar({
   const editedPolygons = polygons.filter(isEdited).filter(matchSearch);
   const uneditedPolygons = polygons.filter((p:any) => !isEdited(p)).filter(matchSearch).slice(0, 100);
 
-  // 圃場名の自動生成
+  // 最近見た圃場
+  const recentPolygons = recentFieldIds
+    .map(id => polygons.find((p: any) => p.internalId === id))
+    .filter(Boolean)
+    .slice(0, 10);
+
+  // 圃場名の自動生成（生産者名_面積_地域名）
   const autoGenerateName = () => {
     if (isGuestMode) return;
     if (!selectedPolygon || !selectedPolygon.producerName) {
-      alert("先に「生産者名」を入力してください。"); return;
+      toast.error('先に「生産者名」を入力してください。');
+      return;
     }
     const area = calculateArea(selectedPolygon.geometry);
-    setPolygons((prev: any) => prev.map((p: any) => p.internalId === selectedPolygonId ? { ...p, fieldName: `${selectedPolygon.producerName}_${area}a` } : p));
+    const locality = localityName || '地域不明';
+    const generated = `${selectedPolygon.producerName}_${area}a_${locality}`;
+    setPolygons((prev: any) => prev.map((p: any) => p.internalId === selectedPolygonId ? { ...p, fieldName: generated } : p));
+    toast.success(`圃場名を生成しました: ${generated}`);
   };
 
   // Googleマップ用重心算出
@@ -99,7 +172,7 @@ export default function Sidebar({
   const addPointAtGps = () => {
     if (isGuestMode) return;
     if (!gpsPosition) {
-      alert("GPS情報を取得できていません。ブラウザの位置情報許可を確認してください。");
+      toast.error('GPS情報を取得できていません。ブラウザの位置情報許可を確認してください。');
       return;
     }
     
@@ -144,11 +217,11 @@ export default function Sidebar({
   const handleGroupPolygons = async () => {
     if (isGuestMode) return;
     if (selectedPolygonIds.length < 2) {
-      alert('グループ化するには、2つ以上の筆ポリゴンを選択してください。');
+      toast.error('グループ化には、2つ以上の筆ポリゴンを選択してください。');
       return;
     }
     if (!groupProducer || !groupFieldName) {
-      alert('生産者名と圃場名（通称）を入力してください。');
+      toast.error('生産者名と圃場名（通称）を入力してください。');
       return;
     }
 
@@ -192,7 +265,7 @@ export default function Sidebar({
           setActiveTab('edit');
         }
 
-        alert('圃場をグループ化して新規登録しました。');
+        toast.success('圃場をグループ化して登録しました。');
         setSelectedPolygonIds([]);
         setIsMultiSelectMode(false);
         setShowGroupForm(false);
@@ -202,7 +275,7 @@ export default function Sidebar({
       }
     } catch (e: any) {
       console.error(e);
-      alert('グループ化に失敗しました: ' + e.message);
+      toast.error('グループ化に失敗しました: ' + e.message);
     }
   };
 
@@ -234,14 +307,14 @@ export default function Sidebar({
         setSelectedPolygonId(saved.internalId);
         setPoints((prev: any) => prev.map((pt: any) => pt.fieldInternalId === selectedPolygonId ? { ...pt, fieldInternalId: saved.internalId } : pt));
       }
-      alert('圃場情報を保存しました。');
+      toast.success('圃場情報を保存しました。');
       
       // 生産者リストも更新しておく
       if (dbService.getProducers) {
         dbService.getProducers().then(setProducers);
       }
     } catch (e: any) {
-      alert('保存に失敗しました: ' + e.message);
+      toast.error('保存に失敗しました: ' + e.message);
     } finally {
       setIsSaving(false);
     }
@@ -252,17 +325,17 @@ export default function Sidebar({
     
     // 紐付く圃場が未保存（poly- や source-）の場合は、先に圃場を保存させる
     if (point.fieldInternalId && (point.fieldInternalId.startsWith('poly-') || point.fieldInternalId.startsWith('source-'))) {
-      alert('先に右上の「保存」ボタンから圃場本体を保存してください。ポイントは圃場と紐付くため、圃場が未保存の状態ではポイントを保存できません。');
+      toast.error('圃場が未保存です。先に「保存」ボタンから圃場を保存してください。');
       return;
     }
 
     try {
       const saved = await dbService.savePoint(point);
       setPoints((prev: any) => prev.map((p: any) => p.id === point.id ? saved : p));
-      alert('ポイントを保存しました。');
+      toast.success('ポイントを保存しました。');
     } catch (error: any) {
       console.error(error);
-      alert('ポイントの保存に失敗しました: ' + error.message);
+      toast.error('ポイントの保存に失敗しました: ' + error.message);
     }
   };
 
@@ -270,7 +343,7 @@ export default function Sidebar({
     if (!e.target.files || e.target.files.length === 0) return;
     const file = e.target.files[0];
     if (!dbService?.uploadPointImage) {
-      alert('画像アップロード機能が利用できません。');
+      toast.error('画像アップロード機能が利用できません。');
       return;
     }
     
@@ -295,7 +368,7 @@ export default function Sidebar({
       }
     } catch (error: any) {
       console.error(error);
-      alert('画像のアップロードに失敗しました。');
+      toast.error('画像のアップロードに失敗しました。');
     } finally {
       setUploadingImageId(null);
     }
@@ -303,18 +376,9 @@ export default function Sidebar({
 
   return (
     <div className="flex flex-col h-full pr-2">
-      {/* 開発者用アップロードボタン */}
-      {!isGuestMode && dbService && (
-        <div className="mb-4 bg-slate-50 p-2 rounded-xl border border-slate-200">
-          <label className="text-xs font-bold text-slate-500 flex items-center justify-center gap-2 cursor-pointer">
-            <UploadCloud size={14} /> マスタデータ (GeoJSON) アップロード
-            <input type="file" accept=".geojson,.json" className="hidden" onChange={handleSourceUpload} disabled={isSaving} />
-          </label>
-        </div>
-      )}
 
-      {/* タブヘッダー (PCでのみ表示、スマホ表示時は下部ナビに一本化するため非表示にする) */}
-      <div className={`border-b text-xs md:text-sm font-semibold shrink-0 bg-slate-50 border-r ${isMobile ? 'hidden' : 'flex'}`}>
+      {/* タブヘッダー (PCでのみ表示、スマホ表示時は下部ナビに一本化するため非表示にする。ゲストモードでも不要なため非表示。) */}
+      <div className={`border-b text-xs md:text-sm font-semibold shrink-0 bg-slate-50 border-r ${isMobile || isGuestMode ? 'hidden' : 'flex'}`}>
         <button className={`flex-1 py-3 text-center transition ${sidebarTab === 'list' ? 'border-b-2 border-indigo-600 bg-white text-indigo-600 font-bold' : 'text-gray-500 hover:bg-gray-100'}`} onClick={() => setActiveTab('list')}>一覧</button>
         <button className={`flex-1 py-3 text-center transition ${sidebarTab === 'edit' ? 'border-b-2 border-indigo-600 bg-white text-indigo-600 font-bold' : 'text-gray-500 hover:bg-gray-100 disabled:opacity-40'}`} onClick={() => setActiveTab('edit')} disabled={!selectedPolygonId}>編集</button>
         <button className={`flex-1 py-3 text-center transition ${sidebarTab === 'points' ? 'border-b-2 border-indigo-600 bg-white text-indigo-600 font-bold' : 'text-gray-500 hover:bg-gray-100 disabled:opacity-40'}`} onClick={() => setActiveTab('points')} disabled={!selectedPolygonId}>ポイント</button>
@@ -330,6 +394,34 @@ export default function Sidebar({
 
         {sidebarTab === 'list' && (
           <div>
+            {/* 最近見た圃場セクション（orgIdがあれば常に表示） */}
+            {recentPolygons.length > 0 && (
+              <div className="mb-4">
+                <h3 className="font-extrabold text-xs text-amber-700 tracking-wider mb-2 flex items-center gap-1.5">
+                  <Clock size={12} className="text-amber-500" />
+                  最近見た圃場
+                </h3>
+                {recentPolygons.map((p: any) => (
+                  <div
+                    key={p.internalId}
+                    onClick={() => {
+                      setSelectedPolygonId(p.internalId);
+                      if (isMobile || isGuestMode) setActiveTab('map');
+                      else setActiveTab('edit');
+                    }}
+                    className={`p-2.5 border rounded-xl cursor-pointer mb-1 text-xs transition flex items-center gap-2 ${
+                      selectedPolygonId === p.internalId
+                        ? 'border-amber-400 bg-amber-50 text-amber-900 font-bold'
+                        : 'hover:bg-amber-50/50 text-slate-700 border-slate-100 bg-white'
+                    }`}
+                  >
+                    <Clock size={11} className="text-amber-400 shrink-0" />
+                    <span className="truncate">{p.fieldName || (p.producerName ? `${p.producerName}` : '名称未設定')}</span>
+                  </div>
+                ))}
+                <div className="border-b border-slate-100 my-3" />
+              </div>
+            )}
             {/* 複数選択トグルエリア (ゲスト閲覧時は非表示にします) */}
             {!isGuestMode && (
               <div className="mb-4 flex items-center justify-between bg-slate-50 border rounded-xl p-3 text-xs font-semibold">
@@ -406,8 +498,8 @@ export default function Sidebar({
                           toggleSelectPolygon(p.internalId);
                         } else {
                           setSelectedPolygonId(p.internalId); 
-                          if (isMobile) {
-                            setActiveTab('map'); // スマホなら自動で地図タブに切り替えて場所を見せる！
+                          if (isMobile || isGuestMode) {
+                            setActiveTab('map'); // スマホまたはゲストモードなら自動で地図タブに切り替えて場所を見せる！
                           } else {
                             setActiveTab('edit'); 
                           }
@@ -433,39 +525,43 @@ export default function Sidebar({
                </div>
             )}
             
-            <h3 className="font-extrabold text-xs text-slate-500 tracking-wider mb-2">未着手筆ポリゴン (最初の100件表示)</h3>
-            {uneditedPolygons.length === 0 ? <p className="text-xs text-gray-400">見つかりません</p> : uneditedPolygons.map((p: any) => (
-              <div 
-                key={p.internalId} 
-                onClick={() => {
-                  if (isMultiSelectMode && !isGuestMode) {
-                    toggleSelectPolygon(p.internalId);
-                  } else {
-                    setSelectedPolygonId(p.internalId); 
-                    if (isMobile) {
-                      setActiveTab('map'); // スマホなら自動で地図タブに切り替えて場所を見せる！
-                    } else {
-                      setActiveTab('edit'); 
-                    }
-                  }
-                }} 
-                className={`p-2.5 border rounded-xl cursor-pointer mb-1 text-xs transition flex items-center justify-between ${
-                  isMultiSelectMode && selectedPolygonIds.includes(p.internalId)
-                    ? 'border-amber-500 bg-amber-50 shadow-sm'
-                    : selectedPolygonId === p.internalId
-                      ? 'border-indigo-500 bg-indigo-50/70 shadow'
-                      : 'hover:bg-slate-50 text-slate-500 border-slate-100'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  {isMultiSelectMode && !isGuestMode && (
-                    selectedPolygonIds.includes(p.internalId) ? <CheckSquare size={12} className="text-amber-600" /> : <Square size={12} className="text-slate-400" />
-                  )}
-                  <span>名称未設定</span>
-                </div>
-                <span className="text-[10px] opacity-75">({calculateArea(p.geometry)}a)</span>
-              </div>
-            ))}
+            {!isGuestMode && (
+              <>
+                <h3 className="font-extrabold text-xs text-slate-500 tracking-wider mb-2">未着手筆ポリゴン (最初の100件表示)</h3>
+                {uneditedPolygons.length === 0 ? <p className="text-xs text-gray-400">見つかりません</p> : uneditedPolygons.map((p: any) => (
+                  <div 
+                    key={p.internalId} 
+                    onClick={() => {
+                      if (isMultiSelectMode && !isGuestMode) {
+                        toggleSelectPolygon(p.internalId);
+                      } else {
+                        setSelectedPolygonId(p.internalId); 
+                        if (isMobile) {
+                          setActiveTab('map'); // スマホなら自動で地図タブに切り替えて場所を見せる！
+                        } else {
+                          setActiveTab('edit'); 
+                        }
+                      }
+                    }} 
+                    className={`p-2.5 border rounded-xl cursor-pointer mb-1 text-xs transition flex items-center justify-between ${
+                      isMultiSelectMode && selectedPolygonIds.includes(p.internalId)
+                        ? 'border-amber-500 bg-amber-50 shadow-sm'
+                        : selectedPolygonId === p.internalId
+                          ? 'border-indigo-500 bg-indigo-50/70 shadow'
+                          : 'hover:bg-slate-50 text-slate-500 border-slate-100'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      {isMultiSelectMode && !isGuestMode && (
+                        selectedPolygonIds.includes(p.internalId) ? <CheckSquare size={12} className="text-amber-600" /> : <Square size={12} className="text-slate-400" />
+                      )}
+                      <span>名称未設定</span>
+                    </div>
+                    <span className="text-[10px] opacity-75">({calculateArea(p.geometry)}a)</span>
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         )}
 
@@ -474,7 +570,7 @@ export default function Sidebar({
             {/* スマホ用「地図で場所を確認」ボタン */}
             {isMobile && (
               <button 
-                onClick={() => setActiveTab('map')}
+                onClick={() => { setActiveTab('map'); if (onShowMap) onShowMap(); }}
                 className="w-full mb-3 bg-white hover:bg-slate-50 text-indigo-700 font-bold py-2.5 px-4 rounded-xl border border-indigo-200 shadow-sm transition flex items-center justify-center gap-1.5 text-xs active:scale-95"
               >
                 <Navigation size={14} className="text-indigo-600 animate-pulse" />
@@ -482,9 +578,20 @@ export default function Sidebar({
               </button>
             )}
 
-            <div className="bg-indigo-50/70 border border-indigo-100 text-indigo-900 p-3.5 rounded-xl text-center font-extrabold mb-4 flex flex-col justify-center">
+            <div className="bg-indigo-50/70 border border-indigo-100 text-indigo-900 p-3.5 rounded-xl text-center font-extrabold mb-3 flex flex-col justify-center">
               <span className="text-[10px] text-indigo-500 font-bold uppercase tracking-wider">実測面積</span>
               <span className="text-lg">{calculateArea(selectedPolygon.geometry)} a <span className="text-xs font-normal text-slate-500">(アール)</span></span>
+            </div>
+
+            {/* 地域情報バッジ */}
+            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 mb-4 text-xs">
+              <MapPin size={12} className="text-indigo-400 shrink-0" />
+              <span className="font-bold text-slate-400">地域:</span>
+              {localityLoading ? (
+                <span className="text-slate-400 animate-pulse">取得中...</span>
+              ) : (
+                <span className="font-semibold text-slate-700">{localityName || '未取得'}</span>
+              )}
             </div>
 
             {['producerName:生産者名:例：山田太郎', 'fieldName:通称（圃場名）:例：上野原_10a', 'cropType:作物:例：コシヒカリ', 'notes:注意点・作業指示:例：電線に注意', 'remarks:ステータス/備考:active / planned'].map(f => {
@@ -559,7 +666,7 @@ export default function Sidebar({
             {/* スマホ用「地図で場所を確認」ボタン */}
             {isMobile && (
               <button 
-                onClick={() => setActiveTab('map')}
+                onClick={() => { setActiveTab('map'); if (onShowMap) onShowMap(); }}
                 className="w-full mb-3 bg-white hover:bg-slate-50 text-indigo-700 font-bold py-2.5 px-4 rounded-xl border border-indigo-200 shadow-sm transition flex items-center justify-center gap-1.5 text-xs active:scale-95"
               >
                 <Navigation size={14} className="text-indigo-600 animate-pulse" />
