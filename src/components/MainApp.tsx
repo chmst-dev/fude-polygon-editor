@@ -14,8 +14,6 @@ export default function MainApp() {
   const [selectedPolygonId, setSelectedPolygonId] = useState<string | null>(null);
   const [isAddingPoint, setIsAddingPoint] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState<string>("");
-  const fileRef = useRef<HTMLInputElement>(null);
-  const wsRef = useRef<HTMLInputElement>(null);
 
   // 複数選択と複数結合（グループ化）
   const [selectedPolygonIds, setSelectedPolygonIds] = useState<string[]>([]);
@@ -29,7 +27,6 @@ export default function MainApp() {
   // 認証とDBサービスの状態
   const [dbService, setDbService] = useState<FieldService | null>(null);
   const [user, setUser] = useState<any>(null);
-  const [isAuthOpen, setIsAuthOpen] = useState(false);
 
   // スマホレスポンシブ用のステート
   const [isMobile, setIsMobile] = useState(false);
@@ -306,74 +303,6 @@ export default function MainApp() {
     return () => clearTimeout(timer);
   }, [polygons, points, dbService, selectedPolygonId]);
 
-  const loadFile = (e: any, type: 'geo' | 'ws') => {
-    const r = new FileReader();
-    r.onload = (ev) => {
-      if (type === 'geo') {
-        setLoadingMsg("データ解析中...");
-        isImportingRef.current = true; // インポート開始フラグ
-        setTimeout(() => {
-          const parsed = parseGeoJSON(ev.target?.result as string);
-          let currentIndex = 0;
-          const CHUNK = 100; // 1チャンク100件に削減してUIスレッドを解放
-          setPolygons([]);
-          prevPolygonsRef.current = []; // prevRefもリセットして差分誤検知を防ぐ
-
-          const processChunk = () => {
-            setPolygons(prev => [...prev, ...parsed.slice(currentIndex, currentIndex + CHUNK)]);
-            currentIndex += CHUNK;
-            if (currentIndex < parsed.length) {
-              setLoadingMsg(`読込中... ${Math.min(currentIndex, parsed.length)} / ${parsed.length}`);
-              setTimeout(processChunk, 0); // 0msでもイベントループを解放できる
-            } else {
-              // 全件ロード完了
-              prevPolygonsRef.current = parsed; // prevRefを最終状態に同期
-              isImportingRef.current = false; // インポート完了 → 自動保存を再開
-              setLoadingMsg("");
-
-              // クラウドDBに自動永続化アップロード
-              if (dbService && !dbService.isReadOnly()) {
-                dbService.isOnline().then(isOnline => {
-                  if (isOnline && 'uploadSourcePolygons' in dbService) {
-                    (dbService as any).uploadSourcePolygons(parsed, (msg: string) => {
-                      setLoadingMsg(msg);
-                      if (msg.startsWith('完了:')) {
-                        setTimeout(() => setLoadingMsg(""), 3000);
-                        dbService.getFields().then(setPolygons);
-                      }
-                    }).catch((err: any) => {
-                      console.error(err);
-                      setLoadingMsg("クラウド保存エラー");
-                      setTimeout(() => setLoadingMsg(""), 3000);
-                    });
-                  }
-                });
-              }
-            }
-          };
-          processChunk();
-        }, 100);
-      } else {
-        const p = JSON.parse(ev.target?.result as string);
-        setPolygons(p.polygons || []);
-        setPoints(p.points || []);
-      }
-    };
-    r.readAsText(e.target.files[0]);
-    e.target.value = '';
-  };
-
-  const handleKmlExport = () => {
-    const producer = window.prompt("特定の生産者のみ出力する場合は名前を入力してください。\n（空欄の場合は入力済みの全件を出力します）");
-    if (producer !== null) exportToKML({ polygons, points }, producer.trim());
-  };
-
-  const saveWs = () => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([JSON.stringify({ polygons, points })]));
-    a.download = 'workspace.json';
-    a.click();
-  };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -393,8 +322,15 @@ export default function MainApp() {
   // 閲覧専用ゲストモードかどうか
   const isGuestMode = dbService?.isReadOnly() || false;
 
-  // ログイン済み（Supabaseモード）では筆データ読込ボタンを非表示にする
-  const isSupabaseMode = user !== null || isGuestMode;
+  // DB初期化待ち状態を考慮
+  if (!dbService) {
+    return <div className="flex h-screen w-full items-center justify-center bg-slate-50"><p className="text-slate-500 font-semibold animate-pulse">読み込み中...</p></div>;
+  }
+
+  // ログインしていない場合（ゲストモード以外）は全画面でAuthModalを表示
+  if (!user && !isGuestMode) {
+    return <AuthModal onSuccess={() => initDb()} />;
+  }
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
@@ -404,48 +340,29 @@ export default function MainApp() {
             圃場地図
           </h1>
           
-          {/* 筆ポリゴン読込ボタン（ローカルモード時のみ表示） */}
-          {!isGuestMode && !isSupabaseMode && (
-            <div className="flex text-xs items-center">
-              <input type="file" className="hidden" ref={fileRef} accept=".geojson,.json" onChange={e => loadFile(e, 'geo')} />
-              <button 
-                onClick={() => fileRef.current?.click()} 
-                className="border px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-sm disabled:opacity-50 font-bold whitespace-nowrap transition-colors active:scale-95" 
-                disabled={!!loadingMsg}
-              >
-                筆データ読込
-              </button>
-            </div>
-          )}
+
 
           {user && (
-            <span className="hidden sm:flex items-center gap-1 text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full whitespace-nowrap">
+            <span className="hidden sm:flex items-center gap-1 text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full whitespace-nowrap mr-4">
               <Cloud size={10} /> 同期中
             </span>
           )}
           {isGuestMode && (
-            <span className="flex items-center gap-1 text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full whitespace-nowrap animate-pulse">
+            <span className="flex items-center gap-1 text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full whitespace-nowrap animate-pulse mr-4">
               閲覧専用
             </span>
           )}
-          {loadingMsg && <span className="text-xs md:text-sm font-bold text-red-600 animate-pulse truncate max-w-[120px] md:max-w-none">{loadingMsg}</span>}
+          {loadingMsg && <span className="text-xs md:text-sm font-bold text-red-600 animate-pulse truncate max-w-[120px] md:max-w-none mr-4">{loadingMsg}</span>}
         </div>
         
         <div className="flex items-center space-x-2 md:space-x-4">
           {/* PC専用操作パネル (スマホでは非表示にしてスッキリさせます) */}
           <div className="hidden lg:flex space-x-2 text-xs">
-            {/* 未ログイン（ローカルモード）時のみ、作業保存・読込ボタンを動的に表示 */}
-            {!user && !isGuestMode && (
-              <>
-                <input type="file" className="hidden" ref={wsRef} accept=".json" onChange={e => loadFile(e, 'ws')} />
-                <button onClick={() => wsRef.current?.click()} className="border px-2 py-1 bg-white hover:bg-gray-50 rounded shadow-sm disabled:opacity-50 font-semibold text-slate-700" disabled={!!loadingMsg}>作業読込</button>
-                <button onClick={saveWs} className="border px-2 py-1 bg-indigo-50 text-indigo-700 font-bold hover:bg-indigo-100 rounded shadow-sm disabled:opacity-50" disabled={!!loadingMsg}>作業保存</button>
-                <div className="w-px bg-gray-300 mx-1"></div>
-              </>
-            )}
-
             <button onClick={() => exportToGeoJSON({ polygons, points })} className="border px-2 py-1 bg-blue-50 text-blue-700 rounded shadow-sm font-semibold">GeoJSON</button>
-            <button onClick={handleKmlExport} className="border px-2 py-1 bg-green-50 text-green-700 font-bold rounded shadow-sm">KML出力</button>
+            <button onClick={() => {
+              const producer = window.prompt("特定の生産者のみ出力する場合は名前を入力してください。\n（空欄の場合は入力済みの全件を出力します）");
+              if (producer !== null) exportToKML({ polygons, points }, producer.trim());
+            }} className="border px-2 py-1 bg-green-50 text-green-700 font-bold rounded shadow-sm">KML出力</button>
             <button onClick={() => exportToCSV({ polygons, points })} className="border px-2 py-1 bg-orange-50 text-orange-700 rounded shadow-sm font-semibold">CSV</button>
           </div>
 
@@ -484,14 +401,7 @@ export default function MainApp() {
                     <span className="hidden sm:inline">ログアウト</span>
                   </button>
                 </div>
-              ) : (
-                <button
-                  onClick={() => setIsAuthOpen(true)}
-                  className="rounded-xl bg-indigo-600 px-3 py-1.5 font-bold text-white shadow-md shadow-indigo-600/20 transition hover:bg-indigo-700 active:scale-95 whitespace-nowrap"
-                >
-                  共同編集
-                </button>
-              )}
+              ) : null}
             </div>
           )}
         </div>
@@ -552,7 +462,7 @@ export default function MainApp() {
               setSelectedPolygonIds={setSelectedPolygonIds}
               isMultiSelectMode={isMultiSelectMode}
               gpsPosition={gpsPosition}
-              onBoundsChange={isSupabaseMode ? onMapBoundsChange : undefined}
+              onBoundsChange={onMapBoundsChange}
             />
           </div>
 
@@ -609,15 +519,7 @@ export default function MainApp() {
         </div>
       )}
 
-      {isAuthOpen && (
-        <AuthModal
-          onSuccess={() => {
-            setIsAuthOpen(false);
-            initDb();
-          }}
-          onClose={() => setIsAuthOpen(false)}
-        />
-      )}
+
     </div>
   );
 }

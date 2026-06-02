@@ -72,23 +72,12 @@ export default function AuthModal({ onSuccess, onClose }: AuthModalProps) {
   };
 
   return (
-    <div 
-      className="fixed inset-0 animate-fade-in"
-      style={{ backgroundColor: 'rgba(15, 23, 42, 0.96)', zIndex: 999999 }}
-    >
-      <div 
-        className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-3xl border border-slate-200 p-8 shadow-2xl transition-all duration-300 flex flex-col"
-        style={{ 
-          position: 'fixed', 
-          top: '50%', 
-          left: '50%', 
-          transform: 'translate(-50%, -50%)', 
-          backgroundColor: '#ffffff', 
-          opacity: 1, 
-          color: '#1e293b',
-          zIndex: 1000000
-        }}
-      >
+    <div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-br from-indigo-900 via-indigo-700 to-purple-800 relative overflow-hidden animate-fade-in">
+      {/* 背景の装飾 */}
+      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-indigo-500/20 blur-3xl pointer-events-none" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-purple-500/20 blur-3xl pointer-events-none" />
+      
+      <div className="relative w-full max-w-md max-h-[95vh] overflow-y-auto rounded-3xl bg-white/95 backdrop-blur-xl border border-white/20 p-8 shadow-2xl transition-all duration-300 flex flex-col z-10 m-4">
         <div className="mb-6 text-center">
           <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/30">
             <Shield size={24} />
@@ -198,14 +187,6 @@ export default function AuthModal({ onSuccess, onClose }: AuthModalProps) {
           )}
         </div>
 
-        {onClose && (
-          <button
-            onClick={onClose}
-            className="absolute top-4 right-4 rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
-          >
-            ✕
-          </button>
-        )}
       </div>
     </div>
   );

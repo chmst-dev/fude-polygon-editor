@@ -15,139 +15,6 @@ export interface FieldService {
   getSourcePolygonsInBbox(west: number, south: number, east: number, north: number): Promise<any[]>;
 }
 
-// 既存のLocalStorage（MVP）用実装
-export class LocalStorageService implements FieldService {
-  async isOnline() {
-    return false;
-  }
-
-  isReadOnly() {
-    return false;
-  }
-
-  async getFields() {
-    const s = localStorage.getItem('fude-state');
-    if (!s) return [];
-    try {
-      const parsed = JSON.parse(s);
-      return parsed.polygons || [];
-    } catch (e) {
-      return [];
-    }
-  }
-
-  async saveField(field: any) {
-    const fields = await this.getFields();
-    const idx = fields.findIndex((f: any) => f.internalId === field.internalId);
-    let updated = [...fields];
-    
-    if (idx >= 0) {
-      updated[idx] = { ...updated[idx], ...field };
-    } else {
-      updated.push(field);
-    }
-    
-    this.saveToStorage(updated, await this.getRawPoints());
-    return field;
-  }
-
-  async deleteField(fieldId: string) {
-    const fields = await this.getFields();
-    const updated = fields.filter((f: any) => f.internalId !== fieldId);
-    
-    // 関連するポイントも削除
-    const points = await this.getRawPoints();
-    const updatedPoints = points.filter((p: any) => p.fieldInternalId !== fieldId);
-    
-    this.saveToStorage(updated, updatedPoints);
-  }
-
-  async getPoints() {
-    return this.getRawPoints();
-  }
-
-  private async getRawPoints() {
-    const s = localStorage.getItem('fude-state');
-    if (!s) return [];
-    try {
-      const parsed = JSON.parse(s);
-      return parsed.points || [];
-    } catch (e) {
-      return [];
-    }
-  }
-
-  async savePoint(point: any) {
-    const points = await this.getRawPoints();
-    const idx = points.findIndex((p: any) => p.id === point.id);
-    let updated = [...points];
-    
-    if (idx >= 0) {
-      updated[idx] = { ...updated[idx], ...point };
-    } else {
-      updated.push(point);
-    }
-    
-    this.saveToStorage(await this.getFields(), updated);
-    return point;
-  }
-
-  async deletePoint(pointId: string) {
-    const points = await this.getRawPoints();
-    const updated = points.filter((p: any) => p.id !== pointId);
-    this.saveToStorage(await this.getFields(), updated);
-  }
-
-  // LocalStorage モードではビューポート取得不要（全件メモリ上にある）
-  async getSourcePolygonsInBbox(_west: number, _south: number, _east: number, _north: number) {
-    return [];
-  }
-
-  async groupPolygons(polygonIds: string[], fieldData: any) {
-    const fields = await this.getFields();
-    const targets = fields.filter((f: any) => polygonIds.includes(f.internalId));
-    
-    if (targets.length === 0) return null;
-
-    let mergedGeom = targets[0].geometry;
-    if (targets.length > 1) {
-      try {
-        let unioned = turf.feature(targets[0].geometry);
-        for (let i = 1; i < targets.length; i++) {
-          unioned = turf.union(turf.featureCollection([unioned, turf.feature(targets[i].geometry)])) || unioned;
-        }
-        mergedGeom = unioned.geometry;
-      } catch (e) {
-        console.warn('Turf union failed, using first geometry', e);
-      }
-    }
-
-    const newField = {
-      internalId: `poly-group-${Date.now()}`,
-      sourceFeatureId: targets[0].sourceFeatureId || null,
-      producerName: fieldData.producerName || '',
-      fieldName: fieldData.fieldName || '',
-      cropType: fieldData.cropType || '',
-      notes: fieldData.notes || '',
-      remarks: fieldData.remarks || '',
-      geometry: mergedGeom,
-      properties: {
-        groupedIds: polygonIds,
-        originalProperties: targets.map((t: any) => t.properties)
-      }
-    };
-
-    const remainingFields = fields.filter((f: any) => !polygonIds.includes(f.internalId));
-    remainingFields.push(newField);
-
-    this.saveToStorage(remainingFields, await this.getRawPoints());
-    return newField;
-  }
-
-  private saveToStorage(polygons: any[], points: any[]) {
-    localStorage.setItem('fude-state', JSON.stringify({ polygons, points }));
-  }
-}
 
 // Supabase（認証・クラウド）用実装
 export class SupabaseService implements FieldService {
@@ -673,16 +540,19 @@ const getQueryParam = (name: string): string | null => {
 // セッションを監視し、最適なデータベースサービスインスタンスを返すファクトリ
 export class DbServiceFactory {
   static async getService(): Promise<FieldService> {
+    // 古いローカルストレージデータ（MVP時代の名残）をクリーンアップ
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('fude-state');
+    }
+
     const orgId = getQueryParam('org') || getQueryParam('share');
     if (orgId) {
       return new GuestService(orgId);
     }
 
+    // 今後は常にSupabaseServiceを使用する
     const supabaseService = new SupabaseService();
-    const isOnline = await supabaseService.isOnline();
-    if (isOnline) {
-      return supabaseService;
-    }
-    return new LocalStorageService();
+    await supabaseService.isOnline();
+    return supabaseService;
   }
 }
