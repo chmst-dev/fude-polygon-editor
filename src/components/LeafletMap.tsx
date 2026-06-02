@@ -109,7 +109,7 @@ function MapEvents({ isAddingPoint, setIsAddingPoint, selectedPolygonId, setPoin
     click(e) {
       if (isAddingPoint && selectedPolygonId) {
         setPoints((prev: any) => [...prev, { 
-          id: uuidv4(), 
+          id: `point-${uuidv4()}`, 
           fieldInternalId: selectedPolygonId, 
           pointType: "入口", 
           name: "新規地点", 

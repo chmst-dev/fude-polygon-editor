@@ -295,9 +295,9 @@ export class SupabaseService implements FieldService {
     await this.isOnline();
     if (!this.userId || !this.userOrgId) throw new Error('Not logged in');
     
-    // 関連する fieldId が一時的な poly- のままであれば、まだ fields が作成されていないため、
+    // 関連する fieldId が一時的な poly- や source- のままであれば、まだ fields が作成されていないため、
     // point の保存は fields の作成完了まで保留します
-    if (point.fieldInternalId && point.fieldInternalId.startsWith('poly-')) {
+    if (point.fieldInternalId && (point.fieldInternalId.startsWith('poly-') || point.fieldInternalId.startsWith('source-'))) {
       return point;
     }
 
