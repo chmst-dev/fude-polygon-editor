@@ -462,8 +462,8 @@ export class SupabaseService implements FieldService {
     const total = polygons.length;
     let successCount = 0;
     
-    // 500件ずつの大チャンクで一瞬で一括Upsert (ネットワークリクエスト数が激減しフリーズを100%防止)
-    const chunkSize = 500;
+    // 安全のため100件ずつのチャンクでUpsert
+    const chunkSize = 100;
     for (let i = 0; i < total; i += chunkSize) {
       const chunk = polygons.slice(i, i + chunkSize);
       
@@ -473,7 +473,7 @@ export class SupabaseService implements FieldService {
 
       // 1. source_polygons マスタの一括Upsert
       const sourceInserts = chunk.map(p => ({
-        id: p.internalId,
+        id: p.id || p.properties?.id || p.internalId || `source-${Date.now()}-${Math.random()}`,
         geom: p.geometry,
         area_sqm: turf.area(turf.feature(p.geometry)),
         original_properties: p.properties || {}
