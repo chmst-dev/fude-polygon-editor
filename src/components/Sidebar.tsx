@@ -249,9 +249,9 @@ export default function Sidebar({
   const handleSavePoint = async (point: any) => {
     if (!dbService || isGuestMode) return;
     
-    // 紐付く圃場が未保存（poly-）の場合は、先に圃場を保存させる
-    if (point.fieldInternalId && point.fieldInternalId.startsWith('poly-')) {
-      alert('先に圃場本体を保存してください。');
+    // 紐付く圃場が未保存（poly- や source-）の場合は、先に圃場を保存させる
+    if (point.fieldInternalId && (point.fieldInternalId.startsWith('poly-') || point.fieldInternalId.startsWith('source-'))) {
+      alert('先に右上の「保存」ボタンから圃場本体を保存してください。ポイントは圃場と紐付くため、圃場が未保存の状態ではポイントを保存できません。');
       return;
     }
 
