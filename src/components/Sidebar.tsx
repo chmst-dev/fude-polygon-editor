@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { Target, Search, CheckSquare, Square, Layers, Navigation, ExternalLink, MapPin, Camera, Save, Loader2 } from 'lucide-react';
+import { Target, Search, CheckSquare, Square, Layers, Navigation, ExternalLink, MapPin, Camera, Save, Loader2, UploadCloud } from 'lucide-react';
 import { calculateArea } from '@/lib/utils';
 import * as turf from '@turf/turf';
 import imageCompression from 'browser-image-compression';
@@ -98,10 +98,11 @@ export default function Sidebar({
   const addPointAtGps = () => {
     if (isGuestMode) return;
     if (!gpsPosition) {
-      alert("現在位置が取得できていません。GPS精度を確認してください。");
+      alert("GPS情報を取得できていません。ブラウザの位置情報許可を確認してください。");
       return;
     }
-      setPoints((prev: any) => [
+    
+    setPoints((prev: any) => [
       ...prev,
       {
         id: `point-${Date.now()}`,
@@ -113,6 +114,29 @@ export default function Sidebar({
         coordinates: [gpsPosition.lng, gpsPosition.lat]
       }
     ]);
+  };
+
+  const handleSourceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const geojson = JSON.parse(event.target?.result as string);
+        if (!geojson.features || !Array.isArray(geojson.features)) throw new Error('Invalid GeoJSON');
+        setIsSaving(true);
+        if (dbService?.uploadSourcePolygons) {
+          await dbService.uploadSourcePolygons(geojson.features, (msg: string) => console.log(msg));
+          alert('マスターデータのアップロードが完了しました。ページをリロードしてください。');
+        }
+      } catch (err: any) {
+        console.error(err);
+        alert('アップロードに失敗しました: ' + err.message);
+      } finally {
+        setIsSaving(false);
+      }
+    };
+    reader.readAsText(file);
   };
 
   // 圃場グループ化処理
@@ -278,6 +302,16 @@ export default function Sidebar({
 
   return (
     <div className="flex flex-col h-full pr-2">
+      {/* 開発者用アップロードボタン */}
+      {!isGuestMode && dbService && (
+        <div className="mb-4 bg-slate-50 p-2 rounded-xl border border-slate-200">
+          <label className="text-xs font-bold text-slate-500 flex items-center justify-center gap-2 cursor-pointer">
+            <UploadCloud size={14} /> マスタデータ (GeoJSON) アップロード
+            <input type="file" accept=".geojson,.json" className="hidden" onChange={handleSourceUpload} disabled={isSaving} />
+          </label>
+        </div>
+      )}
+
       {/* タブヘッダー (PCでは常に表示、スマホ時は下部タブナビと連動するため折りたたまれてもよいが、上部切り替えとしても機能させます) */}
       <div className="flex border-b text-xs md:text-sm font-semibold shrink-0 bg-slate-50 border-r">
         <button className={`flex-1 py-3 text-center transition ${sidebarTab === 'list' ? 'border-b-2 border-indigo-600 bg-white text-indigo-600 font-bold' : 'text-gray-500 hover:bg-gray-100'}`} onClick={() => setActiveTab('list')}>一覧</button>
