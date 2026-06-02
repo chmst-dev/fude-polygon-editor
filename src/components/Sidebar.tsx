@@ -222,6 +222,25 @@ export default function Sidebar({
     }
   };
 
+  const handleSavePoint = async (point: any) => {
+    if (!dbService || isGuestMode) return;
+    
+    // 紐付く圃場が未保存（poly-）の場合は、先に圃場を保存させる
+    if (point.fieldInternalId && point.fieldInternalId.startsWith('poly-')) {
+      alert('先に圃場本体を保存してください。');
+      return;
+    }
+
+    try {
+      const saved = await dbService.savePoint(point);
+      setPoints((prev: any) => prev.map((p: any) => p.id === point.id ? saved : p));
+      alert('ポイントを保存しました。');
+    } catch (error: any) {
+      console.error(error);
+      alert('ポイントの保存に失敗しました: ' + error.message);
+    }
+  };
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, pointId: string) => {
     if (!e.target.files || e.target.files.length === 0) return;
     const file = e.target.files[0];
@@ -575,6 +594,16 @@ export default function Sidebar({
                       className={`w-full text-[10px] mt-1.5 p-1.5 border rounded-lg bg-white outline-none focus:border-indigo-500 ${isGuestMode ? 'bg-slate-100 border-none text-slate-500' : ''}`} 
                       placeholder="補足説明" 
                     />
+
+                    {/* 個別のポイント保存ボタン */}
+                    {!isGuestMode && (
+                      <button 
+                        onClick={() => handleSavePoint(pt)}
+                        className="w-full mt-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold py-1.5 rounded-lg border border-indigo-200 transition shadow-sm text-xs flex items-center justify-center"
+                      >
+                        <Save size={12} className="mr-1.5" /> このポイントを保存
+                      </button>
+                    )}
                   </div>
                 ))
               )}

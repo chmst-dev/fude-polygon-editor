@@ -268,7 +268,11 @@ export default function MainApp() {
         if (isSavingPointRef.current.has(id)) continue; // 多重実行をスキップ
 
         const prev = prevPointsRef.current.find(p => p.id === id);
-        if (prev && JSON.stringify(prev) === JSON.stringify(pt)) {
+        // すでに保存済み(UUID)かつ変更がなければスキップ
+        // ※ただし未保存(point-始まり)で、かつ圃場側が保存済み(poly-以外)になった場合は保存処理に回す
+        const isUnsavedPointWithSavedField = pt.id.startsWith('point-') && !pt.fieldInternalId.startsWith('poly-');
+        
+        if (!isUnsavedPointWithSavedField && prev && JSON.stringify(prev) === JSON.stringify(pt)) {
           continue;
         }
 
