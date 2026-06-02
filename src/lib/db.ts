@@ -239,6 +239,8 @@ export class SupabaseService implements FieldService {
       .from('field_points')
       .select('*');
 
+    console.log('[DEBUG] Fetched points data:', data);
+
     if (error) {
       console.error('Error fetching points from Supabase:', error);
       return [];
@@ -299,8 +301,8 @@ export class SupabaseService implements FieldService {
       return point;
     }
 
-    // PostGIS に確実に保存されるよう、GeoJSON オブジェクトではなく WKT (Well-Known Text) を使用
-    const geomWkt = `POINT(${point.coordinates[0]} ${point.coordinates[1]})`;
+    // PostGIS に確実に保存されるよう、EWKT (SRID付き Well-Known Text) を使用
+    const geomWkt = `SRID=4326;POINT(${point.coordinates[0]} ${point.coordinates[1]})`;
 
     const dbPoint = {
       field_id: point.fieldInternalId,
@@ -311,23 +313,26 @@ export class SupabaseService implements FieldService {
       geom: geomWkt
     };
 
+    let newId = point.id;
     if (point.id && !point.id.startsWith('point-')) {
+      // UPDATE
       const { error } = await supabase
         .from('field_points')
         .update(dbPoint)
         .eq('id', point.id);
       if (error) throw error;
     } else {
+      // INSERT
       const { data, error } = await supabase
         .from('field_points')
         .insert(dbPoint)
         .select('id')
         .single();
       if (error) throw error;
-      point.id = data.id;
+      newId = data.id;
     }
 
-    return point;
+    return { ...point, id: newId };
   }
 
   async deletePoint(pointId: string) {
