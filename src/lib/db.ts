@@ -248,15 +248,30 @@ export class SupabaseService implements FieldService {
   }
 
   protected transformPoints(data: any[]) {
-    return data.map((pt: any) => ({
-      id: pt.id,
-      fieldInternalId: pt.field_id,
-      pointType: pt.point_type,
-      name: pt.name || pt.point_type, // nameがなければpointTypeを表示
-      description: pt.description || '',
-      imageUrl: pt.image_url || null,
-      coordinates: pt.geom.coordinates
-    }));
+    return data.map((pt: any) => {
+      let coords = [0, 0];
+      if (pt.geom && typeof pt.geom === 'object' && pt.geom.coordinates) {
+        coords = pt.geom.coordinates;
+      } else if (typeof pt.geom === 'string') {
+        // もし PostgREST が WKT 文字列等を返してきた場合の簡易パース (POINT(139.7 35.6))
+        const match = pt.geom.match(/POINT\s*\(\s*([-\d.]+)\s+([-\d.]+)\s*\)/i);
+        if (match) {
+          coords = [parseFloat(match[1]), parseFloat(match[2])];
+        } else {
+          console.warn('Unexpected geom string format:', pt.geom);
+        }
+      }
+
+      return {
+        id: pt.id,
+        fieldInternalId: pt.field_id,
+        pointType: pt.point_type,
+        name: pt.name || pt.point_type, // nameがなければpointTypeを表示
+        description: pt.description || '',
+        imageUrl: pt.image_url || null,
+        coordinates: coords
+      };
+    });
   }
 
   async savePoint(point: any) {
@@ -526,19 +541,11 @@ export class GuestService extends SupabaseService {
   }
 
   async getPoints() {
-    const { data: fields } = await supabase
-      .from('fields')
-      .select('id')
-      .eq('organization_id', this.userOrgId);
-      
-    if (!fields || fields.length === 0) return [];
-    
-    const fieldIds = fields.map(f => f.id);
-
+    // 外部結合(inner join)を使って一発で取得する (inクエリ起因のエラー回避)
     const { data, error } = await supabase
       .from('field_points')
-      .select('*')
-      .in('field_id', fieldIds);
+      .select('*, fields!inner(organization_id)')
+      .eq('fields.organization_id', this.userOrgId);
 
     if (error) {
       console.error('Error fetching guest points from Supabase:', error);
