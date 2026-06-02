@@ -196,6 +196,15 @@ export default function MainApp() {
     };
   }, [initDb]);
 
+  // ピン追加完了（またはキャンセル）時に、スマホ表示なら自動的にポイントタブに戻る
+  const prevIsAddingPointRef = useRef(false);
+  useEffect(() => {
+    if (prevIsAddingPointRef.current && !isAddingPoint && isMobile && mobileTab === 'map') {
+      setMobileTab('points');
+    }
+    prevIsAddingPointRef.current = isAddingPoint;
+  }, [isAddingPoint, isMobile, mobileTab]);
+
   // 2. 差分検知自動保存の仕組み (保存中フラグと同期更新で無限ループを鉄壁防御)
   const prevPolygonsRef = useRef<any[]>([]);
   const prevPointsRef = useRef<any[]>([]);
@@ -452,6 +461,7 @@ export default function MainApp() {
             isMultiSelectMode={isMultiSelectMode}
             setIsMultiSelectMode={setIsMultiSelectMode}
             gpsPosition={gpsPosition}
+            isMobile={isMobile}
             activeTabOverride={isMobile ? mobileTab : undefined}
             setActiveTabOverride={isMobile ? setMobileTab : undefined}
           />

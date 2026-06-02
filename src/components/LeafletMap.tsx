@@ -1,8 +1,9 @@
 'use client';
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { MapContainer, TileLayer, GeoJSON, Marker, Popup, useMapEvents, useMap, LayersControl } from 'react-leaflet';
+import { MapContainer, TileLayer, GeoJSON, Marker, Popup, useMapEvents, useMap, LayersControl, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
 import { v4 as uuidv4 } from 'uuid';
+import { Search, MapPin } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
 
 // 文字列から一意の色（HSL）を生成するユーティリティ関数
@@ -160,6 +161,13 @@ function BoundsEmitter({ onBoundsChange }: {
   const emit = useCallback(() => {
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(() => {
+      const zoom = map.getZoom();
+      // ズームレベル15未満（広域）の場合はDBからのフェッチを完全にスキップして超高速化！
+      if (zoom < 15) {
+        console.log('[DEBUG] Zoom level < 15, skipping DB fetch');
+        return;
+      }
+
       const b = map.getBounds().pad(0.2);
       onBoundsChange({
         west:  b.getWest(),
@@ -180,6 +188,20 @@ function BoundsEmitter({ onBoundsChange }: {
   return null;
 }
 
+// ズームレベルをリアルタイムに監視するヘルパーコンポーネント
+function ZoomWatcher({ onZoomChange }: { onZoomChange: (z: number) => void }) {
+  const map = useMap();
+  useMapEvents({
+    zoomend() {
+      onZoomChange(map.getZoom());
+    }
+  });
+  useEffect(() => {
+    onZoomChange(map.getZoom());
+  }, [map, onZoomChange]);
+  return null;
+}
+
 export default function LeafletMap({ 
   polygons, 
   points, 
@@ -196,131 +218,173 @@ export default function LeafletMap({
 }: any) {
   // ビューポート内に絞り込まれたポリゴン
   const [visiblePolygons, setVisiblePolygons] = useState<any[]>([]);
+  const [currentZoom, setCurrentZoom] = useState(15);
+
+  const selectedPolygon = polygons.find((p: any) => p.internalId === selectedPolygonId);
 
   return (
-    <MapContainer 
-      center={[36.1308, 139.6019]} 
-      zoom={15} 
-      style={{ height: '100%', width: '100%', cursor: isAddingPoint ? 'crosshair' : 'grab' }} 
-      preferCanvas={true}
-    >
-      <LayersControl position="topright">
-        {/* ① Google航空写真 (地名・道路ありハイブリッド) -> デフォルト設定 */}
-        <LayersControl.BaseLayer checked name="航空写真 (Google)">
-          <TileLayer 
-            url="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}" 
-            maxZoom={20}
-            attribution="&copy; Google Maps"
-          />
-        </LayersControl.BaseLayer>
+    <div className="relative w-full h-full">
+      <MapContainer 
+        center={[36.1308, 139.6019]} 
+        zoom={15} 
+        style={{ height: '100%', width: '100%', cursor: isAddingPoint ? 'crosshair' : 'grab' }} 
+        preferCanvas={true}
+      >
+        <ZoomWatcher onZoomChange={setCurrentZoom} />
+        
+        <LayersControl position="topright">
+          {/* ① Google航空写真 (地名・道路ありハイブリッド) -> デフォルト設定 */}
+          <LayersControl.BaseLayer checked name="航空写真 (Google)">
+            <TileLayer 
+              url="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}" 
+              maxZoom={20}
+              attribution="&copy; Google Maps"
+            />
+          </LayersControl.BaseLayer>
 
-        {/* ② 標準地図 (OpenStreetMap) */}
-        <LayersControl.BaseLayer name="標準地図 (OSM)">
-          <TileLayer 
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" 
-            maxZoom={19}
-            attribution="&copy; OpenStreetMap"
-          />
-        </LayersControl.BaseLayer>
+          {/* ② 標準地図 (OpenStreetMap) */}
+          <LayersControl.BaseLayer name="標準地図 (OSM)">
+            <TileLayer 
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" 
+              maxZoom={19}
+              attribution="&copy; OpenStreetMap"
+            />
+          </LayersControl.BaseLayer>
 
-        {/* ③ 国土地理院 シームレス空中写真 */}
-        <LayersControl.BaseLayer name="空中写真 (国土地理院)">
-          <TileLayer 
-            url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg" 
-            maxZoom={18}
-            attribution="&copy; 国土地理院"
-          />
-        </LayersControl.BaseLayer>
-      </LayersControl>
+          {/* ③ 国土地理院 シームレス空中写真 */}
+          <LayersControl.BaseLayer name="空中写真 (国土地理院)">
+            <TileLayer 
+              url="https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg" 
+              maxZoom={18}
+              attribution="&copy; 国土地理院"
+            />
+          </LayersControl.BaseLayer>
+        </LayersControl>
 
-      {/* ビューポートカリングフィルター（地図操作に連動してvisiblePolygonsを更新） */}
-      <ViewportFilter
-        polygons={polygons}
-        selectedPolygonId={selectedPolygonId}
-        selectedPolygonIds={selectedPolygonIds}
-        onFiltered={setVisiblePolygons}
-      />
-      
-      {/* 絞り込まれたポリゴンのみ描画 */}
-      {visiblePolygons.length > 0 && (
-        <GeoJSON 
-          key={`map-layer-${visiblePolygons.length}-${selectedPolygonIds.length}-${isMultiSelectMode}-${selectedPolygonId}`} 
-          data={{ 
-            type: "FeatureCollection", 
-            features: visiblePolygons.map((p: any) => ({ 
-              type: "Feature", 
-              geometry: p.geometry, 
-              properties: p 
-            })) 
-          } as any} 
-          style={(f: any) => {
-            const isSelected = f.properties.internalId === selectedPolygonId;
-            const isMultiSelected = selectedPolygonIds.includes(f.properties.internalId);
-            
-            let baseColor = '#10b981'; // 登録済み（デフォルト/名称なし）
-            let borderColor = '#047857';
-            
-            if (f.properties.properties?.isUnmapped) {
-              baseColor = '#94a3b8'; // 未着手
-              borderColor = '#64748b';
-            } else if (f.properties.producerName) {
-              baseColor = stringToHslColor(f.properties.producerName, 55, 60);
-              borderColor = stringToHslColor(f.properties.producerName, 70, 40);
-            }
-
-            return {
-              fillColor: isSelected ? '#4f46e5' : isMultiSelected ? '#f59e0b' : baseColor, 
-              weight: isSelected || isMultiSelected ? 3 : 1, 
-              color: isSelected ? '#312e81' : isMultiSelected ? '#d97706' : borderColor, 
-              fillOpacity: isSelected ? 0.6 : isMultiSelected ? 0.5 : 0.3
-            };
-          }} 
-          onEachFeature={(f: any, l: any) => l.on({ 
-            click: () => {
-              if (isMultiSelectMode) {
-                const id = f.properties.internalId;
-                if (setSelectedPolygonIds) {
-                  setSelectedPolygonIds((prev: string[]) => 
-                    prev.includes(id) ? prev.filter((x: string) => x !== id) : [...prev, id]
-                  );
-                }
-              } else {
-                setSelectedPolygonId(f.properties.internalId);
-              }
-            } 
-          })} 
+        {/* ビューポートカリングフィルター（地図操作に連動してvisiblePolygonsを更新） */}
+        <ViewportFilter
+          polygons={polygons}
+          selectedPolygonId={selectedPolygonId}
+          selectedPolygonIds={selectedPolygonIds}
+          onFiltered={setVisiblePolygons}
         />
-      )}
-      
-      {points.map((pt: any) => (
-        <Marker key={pt.id} position={[pt.coordinates[1], pt.coordinates[0]]} icon={createCustomIcon(pt.pointType, getPointColor(pt.pointType))}>
-          <Popup>
-            <div className="font-bold p-1 text-sm">{pt.pointType} {pt.name && pt.name !== pt.pointType ? `(${pt.name})` : ''}</div>
-            {pt.imageUrl && (
-              <div className="mt-1 w-full max-w-[200px] overflow-hidden rounded shadow-sm border border-slate-200">
-                <img src={pt.imageUrl} alt={pt.pointType} className="w-full h-auto object-cover" />
-              </div>
-            )}
-            {pt.description && <div className="text-xs text-slate-600 mt-1.5">{pt.description}</div>}
-          </Popup>
-        </Marker>
-      ))}
+        
+        {/* 絞り込まれたポリゴンのみ描画 */}
+        {visiblePolygons.length > 0 && (
+          <GeoJSON 
+            key={`map-layer-${visiblePolygons.length}-${selectedPolygonIds.length}-${isMultiSelectMode}-${selectedPolygonId}`} 
+            data={{ 
+              type: "FeatureCollection", 
+              features: visiblePolygons.map((p: any) => ({ 
+                type: "Feature", 
+                geometry: p.geometry, 
+                properties: p 
+              })) 
+            } as any} 
+            style={(f: any) => {
+              const isSelected = f.properties.internalId === selectedPolygonId;
+              const isMultiSelected = selectedPolygonIds.includes(f.properties.internalId);
+              
+              let baseColor = '#10b981'; // 登録済み（デフォルト/名称なし）
+              let borderColor = '#047857';
+              
+              if (f.properties.properties?.isUnmapped) {
+                baseColor = '#fef3c7'; // 未着手 (明るいオレンジベージュ)
+                borderColor = '#f97316'; // 境界線を明るいオレンジに！
+              } else if (f.properties.producerName) {
+                baseColor = stringToHslColor(f.properties.producerName, 55, 60);
+                borderColor = stringToHslColor(f.properties.producerName, 70, 40);
+              }
 
-      {/* GPS現在地マーカー */}
-      {gpsPosition && (
-        <Marker position={[gpsPosition.lat, gpsPosition.lng]} icon={L.divIcon({ 
-          className: 'gps-marker', 
-          html: `<div style="position: relative;"><div style="width: 16px; height: 16px; background-color: #3b82f6; border: 2px solid white; border-radius: 50%; box-shadow: 0 0 10px rgba(59,130,246,0.8); z-index: 100;"></div><div style="position: absolute; top: -4px; left: -4px; width: 24px; height: 24px; background-color: rgba(59,130,246,0.3); border-radius: 50%; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; z-index: 99;"></div></div>`,
-          iconSize: [24, 24],
-          iconAnchor: [12, 12]
-        })}>
-          <Popup><div className="text-xs font-bold">現在地</div></Popup>
-        </Marker>
+              return {
+                fillColor: isSelected ? '#3b82f6' : isMultiSelected ? '#f59e0b' : baseColor, 
+                weight: isSelected ? 4 : isMultiSelected ? 3 : f.properties.properties?.isUnmapped ? 2 : 1, 
+                color: isSelected ? '#06b6d4' : isMultiSelected ? '#d97706' : borderColor, 
+                dashArray: f.properties.properties?.isUnmapped ? '4, 4' : undefined, // 未登録は分かりやすい破線に！
+                fillOpacity: isSelected ? 0.4 : isMultiSelected ? 0.5 : 0.25
+              };
+            }} 
+            onEachFeature={(f: any, l: any) => l.on({ 
+              click: () => {
+                if (isMultiSelectMode) {
+                  const id = f.properties.internalId;
+                  if (setSelectedPolygonIds) {
+                    setSelectedPolygonIds((prev: string[]) => 
+                      prev.includes(id) ? prev.filter((x: string) => x !== id) : [...prev, id]
+                    );
+                  }
+                } else {
+                  setSelectedPolygonId(f.properties.internalId);
+                }
+              } 
+            })} 
+          />
+        )}
+        
+        {/* 選択中のポリゴンの超ハイライトレイヤー ＆ 圃場名の地図上常時表示ラベル */}
+        {selectedPolygon?.geometry && (
+          <GeoJSON
+            key={`selected-highlight-layer-${selectedPolygonId}`}
+            data={selectedPolygon.geometry}
+            style={{
+              fillColor: '#6366f1',
+              fillOpacity: 0.15,
+              weight: 5.5, // 極太！
+              color: '#06b6d4', // 輝くアクアブルー！
+            }}
+          >
+            <Tooltip permanent direction="center" className="font-extrabold border-2 border-indigo-600 bg-white/95 text-indigo-900 rounded-xl px-3 py-1.5 shadow-2xl select-none text-[11px] md:text-xs">
+              📌 {selectedPolygon.fieldName || (selectedPolygon.producerName ? `${selectedPolygon.producerName} (名称未設定)` : '名称未設定')}
+            </Tooltip>
+          </GeoJSON>
+        )}
+        
+        {points.map((pt: any) => (
+          <Marker key={pt.id} position={[pt.coordinates[1], pt.coordinates[0]]} icon={createCustomIcon(pt.pointType, getPointColor(pt.pointType))}>
+            <Popup>
+              <div className="font-bold p-1 text-sm">{pt.pointType} {pt.name && pt.name !== pt.pointType ? `(${pt.name})` : ''}</div>
+              {pt.imageUrl && (
+                <div className="mt-1 w-full max-w-[200px] overflow-hidden rounded shadow-sm border border-slate-200">
+                  <img src={pt.imageUrl} alt={pt.pointType} className="w-full h-auto object-cover" />
+                </div>
+              )}
+              {pt.description && <div className="text-xs text-slate-600 mt-1.5">{pt.description}</div>}
+            </Popup>
+          </Marker>
+        ))}
+
+        {/* GPS現在地マーカー */}
+        {gpsPosition && (
+          <Marker position={[gpsPosition.lat, gpsPosition.lng]} icon={L.divIcon({ 
+            className: 'gps-marker', 
+            html: `<div style="position: relative;"><div style="width: 16px; height: 16px; background-color: #3b82f6; border: 2px solid white; border-radius: 50%; box-shadow: 0 0 10px rgba(59,130,246,0.8); z-index: 100;"></div><div style="position: absolute; top: -4px; left: -4px; width: 24px; height: 24px; background-color: rgba(59,130,246,0.3); border-radius: 50%; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; z-index: 99;"></div></div>`,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+          })}>
+            <Popup><div className="text-xs font-bold">現在地</div></Popup>
+          </Marker>
+        )}
+
+        {onBoundsChange && <BoundsEmitter onBoundsChange={onBoundsChange} />}
+        <MapEvents isAddingPoint={isAddingPoint} setIsAddingPoint={setIsAddingPoint} selectedPolygonId={selectedPolygonId} setPoints={setPoints} />
+        <MapZoomController selectedPolygonId={selectedPolygonId} polygons={polygons} />
+      </MapContainer>
+
+      {/* ズーム警告フローティングバナー */}
+      {currentZoom < 15 && (
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-[1000] bg-amber-50/95 backdrop-blur-md border border-amber-200 shadow-2xl px-5 py-2.5 rounded-2xl flex items-center gap-2 text-xs font-bold text-amber-800 transition-all">
+          <Search size={14} className="text-amber-600 animate-pulse" />
+          地図をズームインすると筆ポリゴンが表示されます
+        </div>
       )}
 
-      {onBoundsChange && <BoundsEmitter onBoundsChange={onBoundsChange} />}
-      <MapEvents isAddingPoint={isAddingPoint} setIsAddingPoint={setIsAddingPoint} selectedPolygonId={selectedPolygonId} setPoints={setPoints} />
-      <MapZoomController selectedPolygonId={selectedPolygonId} polygons={polygons} />
-    </MapContainer>
+      {/* ピン追加モード案内フローティングバー */}
+      {isAddingPoint && (
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-[1000] bg-indigo-600/95 backdrop-blur-md shadow-2xl px-6 py-3 rounded-2xl flex items-center gap-2.5 text-xs font-bold text-white border border-indigo-400/30 animate-pulse">
+          <MapPin size={14} className="animate-bounce text-indigo-200" />
+          地図をクリックしてピンを打ってください（打つと自動で入力画面に戻ります）
+        </div>
+      )}
+    </div>
   );
 }

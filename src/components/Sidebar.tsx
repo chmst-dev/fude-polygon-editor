@@ -20,10 +20,11 @@ export default function Sidebar({
   isMultiSelectMode = false,
   setIsMultiSelectMode,
   gpsPosition = null,
+  isMobile = false,
   activeTabOverride,
   setActiveTabOverride
 }: any) {
-  const [localActiveTab, setLocalActiveTab] = useState<'list' | 'edit' | 'points'>('list');
+  const [localActiveTab, setLocalActiveTab] = useState<'list' | 'edit' | 'points' | 'map'>('list');
   
   // スマホの下部ナビとタブの状態を同期
   const activeTab = activeTabOverride || localActiveTab;
@@ -312,8 +313,8 @@ export default function Sidebar({
         </div>
       )}
 
-      {/* タブヘッダー (PCでは常に表示、スマホ時は下部タブナビと連動するため折りたたまれてもよいが、上部切り替えとしても機能させます) */}
-      <div className="flex border-b text-xs md:text-sm font-semibold shrink-0 bg-slate-50 border-r">
+      {/* タブヘッダー (PCでのみ表示、スマホ表示時は下部ナビに一本化するため非表示にする) */}
+      <div className={`border-b text-xs md:text-sm font-semibold shrink-0 bg-slate-50 border-r ${isMobile ? 'hidden' : 'flex'}`}>
         <button className={`flex-1 py-3 text-center transition ${sidebarTab === 'list' ? 'border-b-2 border-indigo-600 bg-white text-indigo-600 font-bold' : 'text-gray-500 hover:bg-gray-100'}`} onClick={() => setActiveTab('list')}>一覧</button>
         <button className={`flex-1 py-3 text-center transition ${sidebarTab === 'edit' ? 'border-b-2 border-indigo-600 bg-white text-indigo-600 font-bold' : 'text-gray-500 hover:bg-gray-100 disabled:opacity-40'}`} onClick={() => setActiveTab('edit')} disabled={!selectedPolygonId}>編集</button>
         <button className={`flex-1 py-3 text-center transition ${sidebarTab === 'points' ? 'border-b-2 border-indigo-600 bg-white text-indigo-600 font-bold' : 'text-gray-500 hover:bg-gray-100 disabled:opacity-40'}`} onClick={() => setActiveTab('points')} disabled={!selectedPolygonId}>ポイント</button>
@@ -401,13 +402,17 @@ export default function Sidebar({
                    <div 
                      key={p.internalId} 
                      onClick={() => {
-                       if (isMultiSelectMode && !isGuestMode) {
-                         toggleSelectPolygon(p.internalId);
-                       } else {
-                         setSelectedPolygonId(p.internalId); 
-                         setActiveTab('edit'); 
-                       }
-                     }} 
+                        if (isMultiSelectMode && !isGuestMode) {
+                          toggleSelectPolygon(p.internalId);
+                        } else {
+                          setSelectedPolygonId(p.internalId); 
+                          if (isMobile) {
+                            setActiveTab('map'); // スマホなら自動で地図タブに切り替えて場所を見せる！
+                          } else {
+                            setActiveTab('edit'); 
+                          }
+                        }
+                      }} 
                      className={`p-3 border rounded-xl cursor-pointer mb-1.5 text-xs transition flex items-center justify-between ${
                        isMultiSelectMode && selectedPolygonIds.includes(p.internalId)
                          ? 'border-amber-500 bg-amber-50 shadow-sm'
@@ -437,7 +442,11 @@ export default function Sidebar({
                     toggleSelectPolygon(p.internalId);
                   } else {
                     setSelectedPolygonId(p.internalId); 
-                    setActiveTab('edit'); 
+                    if (isMobile) {
+                      setActiveTab('map'); // スマホなら自動で地図タブに切り替えて場所を見せる！
+                    } else {
+                      setActiveTab('edit'); 
+                    }
                   }
                 }} 
                 className={`p-2.5 border rounded-xl cursor-pointer mb-1 text-xs transition flex items-center justify-between ${
@@ -462,6 +471,17 @@ export default function Sidebar({
 
         {sidebarTab === 'edit' && selectedPolygon && (
           <div className="space-y-4">
+            {/* スマホ用「地図で場所を確認」ボタン */}
+            {isMobile && (
+              <button 
+                onClick={() => setActiveTab('map')}
+                className="w-full mb-3 bg-white hover:bg-slate-50 text-indigo-700 font-bold py-2.5 px-4 rounded-xl border border-indigo-200 shadow-sm transition flex items-center justify-center gap-1.5 text-xs active:scale-95"
+              >
+                <Navigation size={14} className="text-indigo-600 animate-pulse" />
+                📍 地図で場所を確認する
+              </button>
+            )}
+
             <div className="bg-indigo-50/70 border border-indigo-100 text-indigo-900 p-3.5 rounded-xl text-center font-extrabold mb-4 flex flex-col justify-center">
               <span className="text-[10px] text-indigo-500 font-bold uppercase tracking-wider">実測面積</span>
               <span className="text-lg">{calculateArea(selectedPolygon.geometry)} a <span className="text-xs font-normal text-slate-500">(アール)</span></span>
@@ -536,11 +556,28 @@ export default function Sidebar({
 
         {sidebarTab === 'points' && selectedPolygon && (
           <div className="space-y-4">
+            {/* スマホ用「地図で場所を確認」ボタン */}
+            {isMobile && (
+              <button 
+                onClick={() => setActiveTab('map')}
+                className="w-full mb-3 bg-white hover:bg-slate-50 text-indigo-700 font-bold py-2.5 px-4 rounded-xl border border-indigo-200 shadow-sm transition flex items-center justify-center gap-1.5 text-xs active:scale-95"
+              >
+                <Navigation size={14} className="text-indigo-600 animate-pulse" />
+                📍 地図で場所を確認する
+              </button>
+            )}
+
             {/* 地図クリック追加 (ゲストは非表示) */}
             {!isGuestMode && (
               <>
                 <button 
-                  onClick={() => setIsAddingPoint(!isAddingPoint)} 
+                  onClick={() => {
+                    const nextAdding = !isAddingPoint;
+                    setIsAddingPoint(nextAdding); 
+                    if (nextAdding && isMobile) {
+                      setActiveTab('map'); // スマホ表示ならピン追加開始時に自動で地図タブへ！
+                    }
+                  }} 
                   className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center border transition shadow-sm ${
                     isAddingPoint 
                       ? 'bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-100' 
