@@ -551,7 +551,7 @@ export default function Sidebar({
                           <option value="入口">入口</option>
                           <option value="駐車場所">駐車場所</option>
                           <option value="水口">水口</option>
-                          <option value="水尻">水尻</option>
+                          <option value="落とし">落とし</option>
                           <option value="危険箇所">危険箇所</option>
                           <option value="その他">その他</option>
                         </select>

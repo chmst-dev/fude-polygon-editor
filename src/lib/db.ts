@@ -268,10 +268,8 @@ export class SupabaseService implements FieldService {
       return point;
     }
 
-    const geom = {
-      type: 'Point',
-      coordinates: point.coordinates
-    };
+    // PostGIS に確実に保存されるよう、GeoJSON オブジェクトではなく WKT (Well-Known Text) を使用
+    const geomWkt = `POINT(${point.coordinates[0]} ${point.coordinates[1]})`;
 
     const dbPoint = {
       field_id: point.fieldInternalId,
@@ -279,7 +277,7 @@ export class SupabaseService implements FieldService {
       name: point.name || point.pointType,
       description: point.description,
       image_url: point.imageUrl,
-      geom: geom
+      geom: geomWkt
     };
 
     if (point.id && !point.id.startsWith('point-')) {
