@@ -519,7 +519,7 @@ export default function Sidebar({
                        )}
                        <span>{p.fieldName || (p.producerName ? `${p.producerName} (名称未設定)` : '名称未設定')}</span>
                      </div>
-                     <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-full">{calculateArea(p.geometry)}a</span>
+                     <span className="text-xs font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-full">{calculateArea(p.geometry)}a</span>
                    </div>
                  ))}
                </div>
@@ -557,7 +557,7 @@ export default function Sidebar({
                       )}
                       <span>名称未設定</span>
                     </div>
-                    <span className="text-[10px] opacity-75">({calculateArea(p.geometry)}a)</span>
+                    <span className="text-xs opacity-75">({calculateArea(p.geometry)}a)</span>
                   </div>
                 ))}
               </>
@@ -579,7 +579,7 @@ export default function Sidebar({
             )}
 
             <div className="bg-indigo-50/70 border border-indigo-100 text-indigo-900 p-3.5 rounded-xl text-center font-extrabold mb-3 flex flex-col justify-center">
-              <span className="text-[10px] text-indigo-500 font-bold uppercase tracking-wider">実測面積</span>
+              <span className="text-xs text-indigo-500 font-bold uppercase tracking-wider">実測面積</span>
               <span className="text-lg">{calculateArea(selectedPolygon.geometry)} a <span className="text-xs font-normal text-slate-500">(アール)</span></span>
             </div>
 
@@ -635,7 +635,7 @@ export default function Sidebar({
             {/* Googleマップ連携ボタンセクション */}
             {centroid && (
               <div className="pt-4 border-t border-slate-100 space-y-2.5">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">外部マップ連携</p>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">外部マップ連携</p>
                 <div className="grid grid-cols-2 gap-2">
                   <a 
                     href={googleMapUrl} 
@@ -705,13 +705,13 @@ export default function Sidebar({
                   現在位置にピンを追加
                 </button>
                 {!gpsPosition && (
-                  <p className="text-[10px] text-slate-400 text-center">※GPS現在地取得（ON）の時のみ有効です</p>
+                  <p className="text-xs text-slate-400 text-center">※GPS現在地取得（ON）の時のみ有効です</p>
                 )}
               </>
             )}
 
             <div className="pt-2 border-t border-slate-100">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">圃場内の重要地点 ({relatedPoints.length})</p>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">圃場内の重要地点 ({relatedPoints.length})</p>
               {relatedPoints.length === 0 ? (
                 <p className="text-xs text-slate-400 italic">登録済みのピンはありません。</p>
               ) : (
@@ -735,7 +735,7 @@ export default function Sidebar({
                         </select>
                       )}
                       {!isGuestMode && (
-                        <button onClick={() => setPoints((prev: any) => prev.filter((p: any) => p.id !== pt.id))} className="text-[10px] text-rose-500 hover:underline font-semibold">削除</button>
+                        <button onClick={() => setPoints((prev: any) => prev.filter((p: any) => p.id !== pt.id))} className="text-xs text-rose-500 hover:underline font-semibold">削除</button>
                       )}
                     </div>
                     
@@ -769,7 +769,7 @@ export default function Sidebar({
                       value={pt.description || ''} 
                       readOnly={isGuestMode}
                       onChange={(e) => setPoints((prev: any) => prev.map((p: any) => p.id === pt.id ? {...p, description: e.target.value} : p))} 
-                      className={`w-full text-[10px] mt-1.5 p-1.5 border rounded-lg bg-white outline-none focus:border-indigo-500 ${isGuestMode ? 'bg-slate-100 border-none text-slate-500' : ''}`} 
+                      className={`w-full text-xs mt-1.5 p-1.5 border rounded-lg bg-white outline-none focus:border-indigo-500 ${isGuestMode ? 'bg-slate-100 border-none text-slate-500' : ''}`} 
                       placeholder="補足説明" 
                     />
 

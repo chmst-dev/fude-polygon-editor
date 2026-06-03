@@ -13,6 +13,30 @@ import { User, LogOut, Cloud, Navigation, Compass, Search, Target, MapPin, X, Ch
 function MainAppInner() {
   const [polygons, setPolygons] = useState<any[]>([]);
   const [points, setPoints] = useState<any[]>([]);
+  
+  // 文字サイズ調整用のステート ('sm' | 'base' | 'lg' | 'xl')
+  const [fontSize, setFontSize] = useState<'sm' | 'base' | 'lg' | 'xl'>('base');
+
+  // 初期ロード時に localStorage からフォントサイズを取得
+  useEffect(() => {
+    const savedSize = localStorage.getItem('fude-font-size') as 'sm' | 'base' | 'lg' | 'xl' | null;
+    if (savedSize && ['sm', 'base', 'lg', 'xl'].includes(savedSize)) {
+      setFontSize(savedSize);
+    }
+  }, []);
+
+  // フォントサイズ変更時に html 要素の fontSize を変更
+  useEffect(() => {
+    const sizeMap = {
+      sm: '14px',
+      base: '16px',
+      lg: '18px',
+      xl: '20px',
+    };
+    document.documentElement.style.fontSize = sizeMap[fontSize];
+    localStorage.setItem('fude-font-size', fontSize);
+  }, [fontSize]);
+
   const [selectedPolygonId, setSelectedPolygonId] = useState<string | null>(null);
   const [isAddingPoint, setIsAddingPoint] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState<string>("");
@@ -224,6 +248,13 @@ function MainAppInner() {
     prevIsAddingPointRef.current = isAddingPoint;
   }, [isAddingPoint, isMobile, mobileTab]);
 
+  // スマホで地図タブに戻ったとき Leaflet を強制再描画（display:none 回避策）
+  useEffect(() => {
+    if (isMobile && mobileTab === 'map') {
+      setForceRefreshMap(c => c + 1);
+    }
+  }, [isMobile, mobileTab]);
+
   // 2. 差分検知自動保存の仕組み (保存中フラグと同期更新で無限ループを鉄壁防御)
   const prevPolygonsRef = useRef<any[]>([]);
   const prevPointsRef = useRef<any[]>([]);
@@ -410,12 +441,12 @@ function MainAppInner() {
 
 
           {user && (
-            <span className="hidden sm:flex items-center gap-1 text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full whitespace-nowrap mr-4">
+            <span className="hidden sm:flex items-center gap-1 text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full whitespace-nowrap mr-4">
               <Cloud size={10} /> 同期中
             </span>
           )}
           {isGuestMode && (
-            <span className="flex items-center gap-1 text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full whitespace-nowrap animate-pulse mr-4">
+            <span className="flex items-center gap-1 text-xs bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full whitespace-nowrap animate-pulse mr-4">
               閲覧専用
             </span>
           )}
@@ -433,6 +464,54 @@ function MainAppInner() {
             <button onClick={() => exportToCSV({ polygons, points })} className="border px-2 py-1 bg-orange-50 text-orange-700 rounded shadow-sm font-semibold">CSV</button>
           </div>
 
+          {/* 文字サイズ調整 UI */}
+          <div className="flex items-center bg-slate-100 rounded-xl p-0.5 border border-slate-200 shadow-inner mr-1 md:mr-2 shrink-0 select-none">
+            <button
+              onClick={() => setFontSize('sm')}
+              title="文字サイズ: 小"
+              className={`px-2 py-1 text-[10px] md:text-xs rounded-lg font-bold transition-all active:scale-95 cursor-pointer ${
+                fontSize === 'sm'
+                  ? 'bg-white text-indigo-700 shadow-sm font-extrabold'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              A-
+            </button>
+            <button
+              onClick={() => setFontSize('base')}
+              title="文字サイズ: 標準"
+              className={`px-2 py-1 text-[10px] md:text-xs rounded-lg font-bold transition-all active:scale-95 cursor-pointer ${
+                fontSize === 'base'
+                  ? 'bg-white text-indigo-700 shadow-sm font-extrabold'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              標準
+            </button>
+            <button
+              onClick={() => setFontSize('lg')}
+              title="文字サイズ: 大"
+              className={`px-2 py-1 text-[10px] md:text-xs rounded-lg font-bold transition-all active:scale-95 cursor-pointer ${
+                fontSize === 'lg'
+                  ? 'bg-white text-indigo-700 shadow-sm font-extrabold'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              A+
+            </button>
+            <button
+              onClick={() => setFontSize('xl')}
+              title="文字サイズ: 特大"
+              className={`px-2 py-1 text-[10px] md:text-xs rounded-lg font-bold transition-all active:scale-95 cursor-pointer ${
+                fontSize === 'xl'
+                  ? 'bg-white text-indigo-700 shadow-sm font-extrabold'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              A++
+            </button>
+          </div>
+
           <div className="h-6 w-px bg-gray-200 hidden md:block" />
 
           {/* 認証ユーザーUI（ゲストモード時はログインを非表示にしてスッキリさせます） */}
@@ -446,7 +525,7 @@ function MainAppInner() {
                       {user.profile?.display_name || 'ユーザー'}
                     </p>
                     {user.profile?.organizations?.name && (
-                      <p className="text-[10px] text-slate-500 font-medium">
+                      <p className="text-xs text-slate-500 font-medium">
                         {user.profile.organizations.name}
                       </p>
                     )}
@@ -478,15 +557,24 @@ function MainAppInner() {
       <div className="flex flex-1 overflow-hidden relative flex-col md:flex-row">
         
         {/* 幅調整可能なサイドバー (PCでは横並び、スマホではタブ切り替えで全画面表示) */}
+        {/* スマホ時は absolute で地図に重ねる。display:none はサイドバー側のみ使用（Leaflet と無関係なので安全） */}
         <aside 
           style={{ 
             width: isMobile ? '100%' : sidebarWidth,
-            display: isMobile && mobileTab === 'map' ? 'none' : undefined
+            ...(isMobile ? {
+              position: 'absolute' as const,
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 10,
+              display: mobileTab === 'map' ? 'none' : undefined,
+            } : {})
           }} 
-          className={`bg-white relative shrink-0 flex flex-col shadow-lg transition-all duration-200 ${
+          className={`bg-white shrink-0 flex flex-col shadow-lg ${
             isMobile 
-              ? 'flex-1 w-full h-[calc(100svh-8rem)] pb-16 z-10' 
-              : 'h-full border-r z-0'
+              ? 'w-full pb-16' 
+              : 'relative h-full border-r z-0'
           }`}
         >
           <Sidebar
@@ -514,10 +602,22 @@ function MainAppInner() {
           <div onMouseDown={startResizing} className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize bg-slate-200 hover:bg-indigo-400 z-50 transition-colors border-r hidden md:block" title="ドラッグで幅を調整" />
         </aside>
         
-        {/* 地図エリア (PCでは残り全体、スマホでは map タブ時のみ全画面表示) */}
+        {/* 地図エリア: スマホ時も display:none は使わず visibility で隠す。
+             display:none だと Leaflet がコンテナサイズを 0x0 と認識して
+             タイルもポリゴンも表示できなくなるため、常に DOM に存在させる。 */}
         <section 
-          style={{ display: isMobile && mobileTab !== 'map' ? 'none' : undefined }}
-          className={`flex-1 relative ${isMobile ? 'w-full h-[calc(100svh-4rem)]' : 'h-full w-full z-0'}`}
+          style={isMobile ? {
+            position: 'absolute' as const,
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 0,
+            // display:none の代わりに visibility で隠す（Leaflet は常にサイズを保持）
+            visibility: mobileTab !== 'map' ? 'hidden' as const : 'visible' as const,
+            pointerEvents: mobileTab !== 'map' ? 'none' as const : 'auto' as const,
+          } : undefined}
+          className={`flex-1 relative ${isMobile ? 'w-full h-full' : 'h-full w-full z-0'}`}
         >
           <div className={`absolute inset-0 ${isMobile ? 'pb-16' : ''}`}>
             <MapArea
@@ -562,14 +662,14 @@ function MainAppInner() {
         <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-white border-t flex justify-around items-center z-40 shadow-xl px-2 pb-1">
           <button 
             onClick={() => setMobileTab('map')} 
-            className={`flex flex-col items-center justify-center flex-1 py-1 text-[10px] font-bold transition-all ${mobileTab === 'map' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
+            className={`flex flex-col items-center justify-center flex-1 py-1 text-xs font-bold transition-all ${mobileTab === 'map' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
           >
             <Compass size={18} className="mb-0.5" />
             地図
           </button>
           <button 
             onClick={() => setMobileTab('list')} 
-            className={`flex flex-col items-center justify-center flex-1 py-1 text-[10px] font-bold transition-all ${mobileTab === 'list' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
+            className={`flex flex-col items-center justify-center flex-1 py-1 text-xs font-bold transition-all ${mobileTab === 'list' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
           >
             <Search size={18} className="mb-0.5" />
             一覧
@@ -579,7 +679,7 @@ function MainAppInner() {
               <button 
                 disabled={!selectedPolygonId}
                 onClick={() => setMobileTab('edit')} 
-                className={`flex flex-col items-center justify-center flex-1 py-1 text-[10px] font-bold transition-all disabled:opacity-30 ${mobileTab === 'edit' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
+                className={`flex flex-col items-center justify-center flex-1 py-1 text-xs font-bold transition-all disabled:opacity-30 ${mobileTab === 'edit' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
               >
                 <User size={18} className="mb-0.5" />
                 編集
@@ -587,7 +687,7 @@ function MainAppInner() {
               <button 
                 disabled={!selectedPolygonId}
                 onClick={() => setMobileTab('points')} 
-                className={`flex flex-col items-center justify-center flex-1 py-1 text-[10px] font-bold transition-all disabled:opacity-30 ${mobileTab === 'points' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
+                className={`flex flex-col items-center justify-center flex-1 py-1 text-xs font-bold transition-all disabled:opacity-30 ${mobileTab === 'points' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
               >
                 <Target size={18} className="mb-0.5" />
                 ポイント
@@ -615,7 +715,7 @@ function MainAppInner() {
                         {infoPanelPolygon.fieldName || infoPanelPolygon.producerName || '名称未設定'}
                       </p>
                       {infoPanelPolygon.producerName && (
-                        <p className="text-[11px] text-slate-500 font-medium">{infoPanelPolygon.producerName}</p>
+                        <p className="text-xs text-slate-500 font-medium">{infoPanelPolygon.producerName}</p>
                       )}
                     </div>
                   </div>
@@ -626,13 +726,13 @@ function MainAppInner() {
                 <div className="grid grid-cols-3 gap-2 mb-3">
                   {infoPanelPolygon.cropType && (
                     <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-2 text-center">
-                      <p className="text-[9px] font-bold text-emerald-600 uppercase tracking-wide">作物</p>
+                      <p className="text-[0.6875rem] font-bold text-emerald-600 uppercase tracking-wide">作物</p>
                       <p className="font-bold text-emerald-900 text-xs mt-0.5">{infoPanelPolygon.cropType}</p>
                     </div>
                   )}
                   {infoPanelPolygon.geometry && (
                     <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-2 text-center">
-                      <p className="text-[9px] font-bold text-indigo-600 uppercase tracking-wide">面積</p>
+                      <p className="text-[0.6875rem] font-bold text-indigo-600 uppercase tracking-wide">面積</p>
                       <p className="font-bold text-indigo-900 text-xs mt-0.5">
                         {(() => { try { const a = require('@turf/turf').area(infoPanelPolygon.geometry); return `${(a / 100).toFixed(1)}a`; } catch { return '-'; } })()}
                       </p>
@@ -640,7 +740,7 @@ function MainAppInner() {
                   )}
                   {points.filter((p: any) => p.fieldInternalId === infoPanelPolygon.internalId).length > 0 && (
                     <div className="bg-amber-50 border border-amber-100 rounded-xl p-2 text-center">
-                      <p className="text-[9px] font-bold text-amber-600 uppercase tracking-wide">ポイント</p>
+                      <p className="text-[0.6875rem] font-bold text-amber-600 uppercase tracking-wide">ポイント</p>
                       <p className="font-bold text-amber-900 text-xs mt-0.5">{points.filter((p: any) => p.fieldInternalId === infoPanelPolygon.internalId).length}件</p>
                     </div>
                   )}
@@ -652,13 +752,13 @@ function MainAppInner() {
                 )}
                 {points.filter((p: any) => p.fieldInternalId === infoPanelPolygon.internalId).length > 0 && (
                   <div className="mt-3 pt-3 border-t border-slate-100">
-                    <p className="text-[10px] font-bold text-slate-400 mb-2">登録ポイント</p>
+                    <p className="text-xs font-bold text-slate-400 mb-2">登録ポイント</p>
                     <div className="flex flex-wrap gap-1.5">
                       {points.filter((p: any) => p.fieldInternalId === infoPanelPolygon.internalId).map((pt: any) => (
                         <button
-                          key={pt.id}
-                          onClick={() => { setInfoPanelPoint(pt); setInfoPanelPolygon(null); }}
-                          className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 transition"
+                           key={pt.id}
+                           onClick={() => { setInfoPanelPoint(pt); setInfoPanelPolygon(null); }}
+                           className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
                         >
                           📍 {pt.pointType}{pt.name && pt.name !== pt.pointType ? ` (${pt.name})` : ''}
                         </button>
@@ -678,7 +778,7 @@ function MainAppInner() {
                       <p className="font-extrabold text-slate-900 text-sm">
                         {infoPanelPoint.pointType}{infoPanelPoint.name && infoPanelPoint.name !== infoPanelPoint.pointType ? ` (${infoPanelPoint.name})` : ''}
                       </p>
-                      {(() => { const f = polygons.find((p: any) => p.internalId === infoPanelPoint.fieldInternalId); return f ? <p className="text-[11px] text-slate-500">{f.fieldName || f.producerName || '圃場'}</p> : null; })()}
+                      {(() => { const f = polygons.find((p: any) => p.internalId === infoPanelPoint.fieldInternalId); return f ? <p className="text-xs text-slate-500">{f.fieldName || f.producerName || '圃場'}</p> : null; })()}
                     </div>
                   </div>
                   <button onClick={() => setInfoPanelPoint(null)} className="text-slate-400 hover:text-slate-700 transition p-1 rounded-lg hover:bg-slate-100">
@@ -695,7 +795,7 @@ function MainAppInner() {
                 )}
                 <button
                   onClick={() => { const f = polygons.find((p: any) => p.internalId === infoPanelPoint.fieldInternalId); if (f) { setInfoPanelPolygon(f); setInfoPanelPoint(null); } }}
-                  className="mt-3 text-[11px] text-indigo-600 font-bold hover:underline"
+                  className="mt-3 text-xs text-indigo-600 font-bold hover:underline"
                 >
                   ← 圃場情報に戻る
                 </button>

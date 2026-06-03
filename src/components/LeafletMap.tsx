@@ -12,8 +12,24 @@ function stringToHslColor(str: string, s: number, l: number) {
   for (let i = 0; i < str.length; i++) {
     hash = str.charCodeAt(i) + ((hash << 5) - hash);
   }
-  const h = Math.abs(hash) % 360;
+  // 360と互いに素であり、黄金角(約137.5度)に近い137を乗算することで、
+  // 連番（テスト太郎2, テスト太郎3など）のわずかなハッシュ値の差でも色相が大きく離れるように分散させます
+  const h = (Math.abs(hash) * 137) % 360;
   return `hsl(${h}, ${s}%, ${l}%)`;
+}
+
+// ポリゴン配列の状態（IDと生産者名）から簡易ハッシュを生成し、状態変化時にGeoJSONを強制再描画させる
+function getPolygonsHash(polygons: any[]): number {
+  let hash = 0;
+  for (let i = 0; i < polygons.length; i++) {
+    const p = polygons[i];
+    const str = `${p.internalId}:${p.producerName || ''}`;
+    for (let j = 0; j < str.length; j++) {
+      hash = (hash << 5) - hash + str.charCodeAt(j);
+      hash |= 0;
+    }
+  }
+  return hash;
 }
 
 const createCustomIcon = (type: string, color: string = '#3b82f6') => L.divIcon({ 
@@ -25,12 +41,12 @@ const createCustomIcon = (type: string, color: string = '#3b82f6') => L.divIcon(
 
 const getPointColor = (type: string) => {
   switch (type) {
-    case '入口': return '#10b981';
-    case '駐車場所': return '#f59e0b';
-    case '水口': return '#3b82f6';
-    case '水尻': return '#6366f1';
-    case '危険箇所': return '#ef4444';
-    default: return '#6b7280';
+    case '入口': return '#059669'; // 濃いグリーン
+    case '駐車場所': return '#d97706'; // 濃いアンバー
+    case '水口': return '#1d4ed8'; // 濃いブルー
+    case '水尻': return '#4f46e5'; // 濃いインディゴ
+    case '危険箇所': return '#dc2626'; // 濃いレッド
+    default: return '#4b5563';
   }
 };
 
@@ -129,7 +145,10 @@ function MapZoomController({ selectedPolygonId, polygons }: any) {
 
   useEffect(() => {
     const t1 = setTimeout(() => map.invalidateSize(), 100);
-    const t2 = setTimeout(() => map.invalidateSize(), 500);
+    const t2 = setTimeout(() => {
+      map.invalidateSize();
+      map.fire('moveend'); // ViewportFilter も再実行してポリゴンを確実に表示
+    }, 500);
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [map]);
 
@@ -203,15 +222,21 @@ function ZoomWatcher({ onZoomChange }: { onZoomChange: (z: number) => void }) {
 }
 
 // display:none から表示に戻ったとき（タブ切り替えなど）に強制再描画するコンポーネント
+// visibility:hidden → visible の切り替え後も確実に再描画させるため
+// invalidateSize だけでなく moveend も発火して ViewportFilter（ポリゴン描画）も再実行する
 function InvalidateSizeOnForceRefresh({ forceRefresh }: { forceRefresh: number }) {
   const map = useMap();
   useEffect(() => {
     if (!forceRefresh) return; // 初期値(0)では発火しない
-    // 少し遅延を入れてCSSのdisplay変更が完了してから呼ぶ
-    const t = setTimeout(() => {
-      map.invalidateSize();
-    }, 100);
-    return () => clearTimeout(t);
+    // CSSの visibility 変更→レイアウト確定→Leaflet再描画を段階的に実行
+    const refresh = () => {
+      map.invalidateSize({ animate: false });
+      map.fire('moveend'); // ViewportFilter を再実行させてポリゴンを再表示
+    };
+    const t1 = setTimeout(refresh, 50);   // 即時
+    const t2 = setTimeout(refresh, 200);  // CSS transition 完了後
+    const t3 = setTimeout(refresh, 600);  // 念のため最終フォールバック
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
   }, [forceRefresh, map]);
   return null;
 }
@@ -290,7 +315,7 @@ export default function LeafletMap({
         {/* 絞り込まれたポリゴンのみ描画 */}
         {visiblePolygons.length > 0 && (
           <GeoJSON 
-            key={`map-layer-${visiblePolygons.length}-${selectedPolygonIds.length}-${isMultiSelectMode}-${selectedPolygonId}`} 
+            key={`map-layer-${visiblePolygons.length}-${selectedPolygonIds.length}-${isMultiSelectMode}-${selectedPolygonId}-${getPolygonsHash(visiblePolygons)}`} 
             data={{ 
               type: "FeatureCollection", 
               features: visiblePolygons.map((p: any) => ({ 
@@ -303,23 +328,25 @@ export default function LeafletMap({
               const isSelected = f.properties.internalId === selectedPolygonId;
               const isMultiSelected = selectedPolygonIds.includes(f.properties.internalId);
               
-              let baseColor = '#10b981'; // 登録済み（デフォルト/名称なし）
-              let borderColor = '#047857';
+              let baseColor = '#059669'; // 登録済み（デフォルト/名称なし）: 濃いめのグリーン
+              let borderColor = '#022c22'; // 非常に濃いグリーンで境界線を強調
               
               if (f.properties.properties?.isUnmapped) {
-                baseColor = '#fef3c7'; // 未着手 (明るいオレンジベージュ)
-                borderColor = '#f97316'; // 境界線を明るいオレンジに！
+                baseColor = '#ea580c'; // 未着手: 屋外でもはっきり見える濃いオレンジ
+                borderColor = '#431407'; // 非常に濃い茶褐色で境界線を強調
               } else if (f.properties.producerName) {
-                baseColor = stringToHslColor(f.properties.producerName, 55, 60);
-                borderColor = stringToHslColor(f.properties.producerName, 70, 40);
+                // 彩度(S)を85%、輝度(L)を42%に設定し、屋外でも映える強めの鮮やかな色味に
+                baseColor = stringToHslColor(f.properties.producerName, 85, 42);
+                borderColor = stringToHslColor(f.properties.producerName, 90, 22); // 境界は同色系の非常に濃い暗色
               }
 
               return {
-                fillColor: isSelected ? '#3b82f6' : isMultiSelected ? '#f59e0b' : baseColor, 
-                weight: isSelected ? 4 : isMultiSelected ? 3 : f.properties.properties?.isUnmapped ? 2 : 1, 
-                color: isSelected ? '#06b6d4' : isMultiSelected ? '#d97706' : borderColor, 
+                fillColor: isSelected ? '#2563eb' : isMultiSelected ? '#d97706' : baseColor, 
+                weight: isSelected ? 4.5 : isMultiSelected ? 3.5 : f.properties.properties?.isUnmapped ? 2.5 : 2, 
+                color: isSelected ? '#1e3a8a' : isMultiSelected ? '#78350f' : borderColor, 
                 dashArray: f.properties.properties?.isUnmapped ? '4, 4' : undefined, // 未登録は分かりやすい破線に！
-                fillOpacity: isSelected ? 0.4 : isMultiSelected ? 0.5 : 0.25
+                // 日差しの下でもはっきりと視認できるよう、不透明度を大幅に引き上げ
+                fillOpacity: isSelected ? 0.6 : isMultiSelected ? 0.65 : 0.5
               };
             }} 
             onEachFeature={(f: any, l: any) => l.on({ 
@@ -330,7 +357,7 @@ export default function LeafletMap({
                   const id = f.properties.internalId;
                   if (setSelectedPolygonIds) {
                     setSelectedPolygonIds((prev: string[]) => 
-                      prev.includes(id) ? prev.filter((x: string) => x !== id) : [...prev, id]
+                     prev.includes(id) ? prev.filter((x: string) => x !== id) : [...prev, id]
                     );
                   }
                 } else {
@@ -347,13 +374,13 @@ export default function LeafletMap({
             key={`selected-highlight-layer-${selectedPolygonId}`}
             data={selectedPolygon.geometry}
             style={{
-              fillColor: '#6366f1',
-              fillOpacity: 0.15,
-              weight: 5.5, // 極太！
-              color: '#06b6d4', // 輝くアクアブルー！
+              fillColor: '#4f46e5',
+              fillOpacity: 0.3,
+              weight: 6, // さらに極太に！
+              color: '#0891b2', // 濃いめのアクアブルー
             }}
           >
-            <Tooltip permanent direction="center" className="font-extrabold border-2 border-indigo-600 bg-white/95 text-indigo-900 rounded-xl px-3 py-1.5 shadow-2xl select-none text-[11px] md:text-xs">
+            <Tooltip permanent direction="center" className="font-extrabold border-2 border-indigo-600 bg-white/95 text-indigo-900 rounded-xl px-3 py-1.5 shadow-2xl select-none text-xs">
               📌 {selectedPolygon.fieldName || (selectedPolygon.producerName ? `${selectedPolygon.producerName} (名称未設定)` : '名称未設定')}
             </Tooltip>
           </GeoJSON>
