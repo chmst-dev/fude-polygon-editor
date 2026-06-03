@@ -1,6 +1,6 @@
 import './globals.css';
 export const metadata = {
-  title: 'みんなの圃場マップ共同編集画面',
+  title: 'みんなの圃場マップ',
   description: '圃場情報を入れる画面です',
 };
 export default function RootLayout({ children }: { children: React.ReactNode }) {
