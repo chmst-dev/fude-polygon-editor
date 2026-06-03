@@ -83,7 +83,7 @@ export default function AuthModal({ onSuccess, onClose }: AuthModalProps) {
             <Shield size={24} />
           </div>
           <h2 className="mt-4 text-2xl font-bold tracking-tight text-slate-800">
-            {isSignUp ? '新規アカウント作成' : '共同編集システム ログイン'}
+            {isSignUp ? '新規アカウント作成' : 'みんなの圃場マップ ログイン'}
           </h2>
           <p className="mt-1 text-sm text-slate-500">
             {isSignUp ? 'アカウント情報を登録します' : 'アカウント情報を入力してログインしてください'}

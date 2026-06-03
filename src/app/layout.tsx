@@ -1,7 +1,7 @@
 import './globals.css';
 export const metadata = {
-  title: '共同編集システム',
-  description: '圃場ポリゴン共同編集システム',
+  title: 'みんなの圃場マップ共同編集画面',
+  description: '圃場情報を入れる画面です',
 };
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

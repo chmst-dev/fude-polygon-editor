@@ -416,7 +416,13 @@ function MainAppInner() {
 
   // ページタイトルをモードに応じて動的に設定
   useEffect(() => {
-    document.title = isGuestMode ? 'みんなの圃場マップ' : '共同編集システム';
+    document.title = isGuestMode ? 'みんなの圃場マップ' : 'みんなの圃場マップ共同編集画面';
+    
+    // descriptionメタタグもクライアント側で動的に更新
+    const metaDescription = document.querySelector('meta[name="description"]');
+    if (metaDescription) {
+      metaDescription.setAttribute('content', isGuestMode ? 'みんなの圃場マップ' : '圃場情報を入れる画面です');
+    }
   }, [isGuestMode]);
 
   // DB初期化待ち状態を考慮
@@ -435,7 +441,7 @@ function MainAppInner() {
       <header className="bg-white border-b px-4 py-3 flex items-center justify-between shrink-0 shadow-sm" style={{ zIndex: 1000 }}>
         <div className="flex items-center space-x-2 md:space-x-4">
           <h1 className="font-bold text-indigo-700 flex items-center gap-1.5 text-sm md:text-base">
-            {isGuestMode ? 'みんなの圃場マップ' : '共同編集システム'}
+            {isGuestMode ? 'みんなの圃場マップ' : 'みんなの圃場マップ共同編集画面'}
           </h1>
           
 
