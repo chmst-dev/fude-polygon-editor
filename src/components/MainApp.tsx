@@ -98,12 +98,25 @@ function MainAppInner() {
   }, []);
 
   // 圃場選択時に自動で編集タブに遷移（編集権限がある場合のみ）
+  // ただし、ポイント追加モード中はタブを切り替えない（ポイントタブへの自動遷移を上書きしないため）
   useEffect(() => {
-    if (selectedPolygonId && !isGuestMode) {
+    if (selectedPolygonId && !isGuestMode && !isAddingPoint) {
       handleSetActiveTab('edit');
     }
-  }, [selectedPolygonId, isGuestMode, handleSetActiveTab]);
+  }, [selectedPolygonId, isGuestMode, handleSetActiveTab, isAddingPoint]);
 
+  // ピン追加完了（またはキャンセル）時に、自動的にポイントタブに戻る
+  // スマホ・PC問わず、地図上でピンを打った直後はポイント画面に留まるべき
+  const prevIsAddingPointRef = useRef(false);
+  useEffect(() => {
+    if (prevIsAddingPointRef.current && !isAddingPoint) {
+      // ピン追加が完了したらポイントタブへ（スマホでは地図タブから戻す）
+      handleSetActiveTab('points');
+    }
+    prevIsAddingPointRef.current = isAddingPoint;
+  }, [isAddingPoint, handleSetActiveTab]);
+
+  // サイドバーリサイズ用マウスイベント
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDragging.current) return;
@@ -247,14 +260,6 @@ function MainAppInner() {
     };
   }, [initDb]);
 
-  // ピン追加完了（またはキャンセル）時に、スマホ表示なら自動的にポイントタブに戻る
-  const prevIsAddingPointRef = useRef(false);
-  useEffect(() => {
-    if (prevIsAddingPointRef.current && !isAddingPoint && isMobile && mobileTab === 'map') {
-      setMobileTab('points');
-    }
-    prevIsAddingPointRef.current = isAddingPoint;
-  }, [isAddingPoint, isMobile, mobileTab]);
 
   // スマホで地図タブに戻ったとき Leaflet を強制再描画（display:none 回避策）
   useEffect(() => {
