@@ -63,6 +63,47 @@ export default function Sidebar({
   const [localityLoading, setLocalityLoading] = useState(false);
   const [recentFieldIds, setRecentFieldIds] = useState<string[]>([]);
 
+  // 最終更新者関連のステート
+  const [lastUpdate, setLastUpdate] = useState<{ displayName: string; updatedAt: string } | null>(null);
+  const [loadingLastUpdate, setLoadingLastUpdate] = useState(false);
+
+  const fetchLastUpdate = useCallback(async (fieldId: string) => {
+    if (!dbService?.getLastUpdateLog || isGuestMode) return;
+    if (!fieldId || fieldId.startsWith('poly-') || fieldId.startsWith('source-')) {
+      setLastUpdate(null);
+      return;
+    }
+    setLoadingLastUpdate(true);
+    try {
+      const log = await dbService.getLastUpdateLog(fieldId);
+      if (log) {
+        const date = new Date(log.created_at);
+        const formattedDate = date.toLocaleString('ja-JP', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        setLastUpdate({
+          displayName: log.profiles?.display_name || '名称未設定',
+          updatedAt: formattedDate
+        });
+      } else {
+        setLastUpdate(null);
+      }
+    } catch (e) {
+      console.error('Error fetching last update log:', e);
+      setLastUpdate(null);
+    } finally {
+      setLoadingLastUpdate(false);
+    }
+  }, [dbService, isGuestMode]);
+
+  useEffect(() => {
+    fetchLastUpdate(selectedPolygonId);
+  }, [selectedPolygonId, fetchLastUpdate]);
+
   const selectedPolygon = polygons.find((p: any) => p.internalId === selectedPolygonId);
   const relatedPoints = points.filter((p: any) => p.fieldInternalId === selectedPolygonId);
 
@@ -120,6 +161,8 @@ export default function Sidebar({
 
 
   const isEdited = (p: any) => p.producerName || p.cropType || p.notes || p.remarks || points.some((pt: any) => pt.fieldInternalId === p.internalId);
+  // DBに未保存（一時ID）かどうかを判定
+  const isUnsaved = (p: any) => !p.internalId || p.internalId.startsWith('poly-') || p.internalId.startsWith('source-') || p.internalId.includes('-group-');
   
   // 検索フィルター
   const matchSearch = (p: any) => {
@@ -129,6 +172,9 @@ export default function Sidebar({
 
   const editedPolygons = polygons.filter(isEdited).filter(matchSearch);
   const uneditedPolygons = polygons.filter((p:any) => !isEdited(p)).filter(matchSearch).slice(0, 100);
+
+  const savedCount = editedPolygons.filter((p: any) => !isUnsaved(p)).length;
+  const unsavedCount = editedPolygons.filter((p: any) => isUnsaved(p)).length;
 
   // 最近見た圃場
   const recentPolygons = recentFieldIds
@@ -308,6 +354,9 @@ export default function Sidebar({
         setPoints((prev: any) => prev.map((pt: any) => pt.fieldInternalId === selectedPolygonId ? { ...pt, fieldInternalId: saved.internalId } : pt));
       }
       toast.success('圃場情報を保存しました。');
+      
+      // 最終更新者情報を再取得
+      fetchLastUpdate(saved.internalId);
       
       // 生産者リストも更新しておく
       if (dbService.getProducers) {
@@ -489,7 +538,14 @@ export default function Sidebar({
             
             {editedPolygons.length > 0 && (
                <div className="mb-4">
-                 <h3 className="font-extrabold text-xs text-indigo-700 tracking-wider mb-2">登録済み圃場 ({editedPolygons.length})</h3>
+                 <div className="flex items-center justify-between mb-2">
+                   <h3 className="font-extrabold text-xs text-indigo-700 tracking-wider">登録済み圃場 ({savedCount})</h3>
+                   {unsavedCount > 0 && (
+                     <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full">
+                       未保存 {unsavedCount}件あり
+                     </span>
+                   )}
+                 </div>
                  {editedPolygons.map((p: any) => (
                    <div 
                      key={p.internalId} 
@@ -499,27 +555,32 @@ export default function Sidebar({
                         } else {
                           setSelectedPolygonId(p.internalId); 
                           if (isMobile || isGuestMode) {
-                            setActiveTab('map'); // スマホまたはゲストモードなら自動で地図タブに切り替えて場所を見せる！
+                            setActiveTab('map');
                           } else {
                             setActiveTab('edit'); 
                           }
                         }
-                      }} 
+                     }} 
                      className={`p-3 border rounded-xl cursor-pointer mb-1.5 text-xs transition flex items-center justify-between ${
                        isMultiSelectMode && selectedPolygonIds.includes(p.internalId)
                          ? 'border-amber-500 bg-amber-50 shadow-sm'
                          : selectedPolygonId === p.internalId
                            ? 'border-indigo-500 bg-indigo-50/70 shadow-sm font-bold text-indigo-900'
-                           : 'hover:bg-slate-50 text-slate-800 border-slate-100 bg-slate-50/20'
+                           : isUnsaved(p)
+                             ? 'hover:bg-amber-50 text-slate-800 border-amber-200 bg-amber-50/30'
+                             : 'hover:bg-slate-50 text-slate-800 border-slate-100 bg-slate-50/20'
                      }`}
                    >
-                     <div className="flex items-center gap-2">
+                     <div className="flex items-center gap-2 min-w-0">
                        {isMultiSelectMode && !isGuestMode && (
-                         selectedPolygonIds.includes(p.internalId) ? <CheckSquare size={14} className="text-amber-600" /> : <Square size={14} className="text-slate-400" />
+                         selectedPolygonIds.includes(p.internalId) ? <CheckSquare size={14} className="text-amber-600 shrink-0" /> : <Square size={14} className="text-slate-400 shrink-0" />
                        )}
-                       <span>{p.fieldName || (p.producerName ? `${p.producerName} (名称未設定)` : '名称未設定')}</span>
+                       <span className="truncate">{p.fieldName || (p.producerName ? `${p.producerName} (名称未設定)` : '名称未設定')}</span>
+                       {isUnsaved(p) && (
+                         <span className="shrink-0 text-[10px] font-bold text-amber-700 bg-amber-100 border border-amber-300 px-1 py-0.5 rounded">未保存</span>
+                       )}
                      </div>
-                     <span className="text-xs font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-full">{calculateArea(p.geometry)}a</span>
+                     <span className="text-xs font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-full shrink-0 ml-1">{calculateArea(p.geometry)}a</span>
                    </div>
                  ))}
                </div>
@@ -593,6 +654,21 @@ export default function Sidebar({
                 <span className="font-semibold text-slate-700">{localityName || '未取得'}</span>
               )}
             </div>
+
+            {/* 最終更新者情報 */}
+            {(lastUpdate || loadingLastUpdate) && (
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 mb-4 text-xs">
+                <Clock size={12} className="text-indigo-400 shrink-0" />
+                <span className="font-bold text-slate-400">最終更新:</span>
+                {loadingLastUpdate ? (
+                  <span className="text-slate-400 animate-pulse">取得中...</span>
+                ) : (
+                  <span className="font-semibold text-slate-700">
+                    {lastUpdate ? `${lastUpdate.displayName} (${lastUpdate.updatedAt})` : 'なし'}
+                  </span>
+                )}
+              </div>
+            )}
 
             {['producerName:生産者名:例：山田太郎', 'fieldName:通称（圃場名）:例：上野原_10a', 'cropType:作物:例：コシヒカリ', 'notes:注意点・作業指示:例：電線に注意', 'remarks:ステータス/備考:active / planned'].map(f => {
               const [key, label, placeholder] = f.split(':');

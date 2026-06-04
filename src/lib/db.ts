@@ -15,6 +15,7 @@ export interface FieldService {
   getSourcePolygonsInBbox(west: number, south: number, east: number, north: number): Promise<any[]>;
   uploadPointImage?(file: File, pointId: string): Promise<string>;
   getProducers?(): Promise<string[]>;
+  getLastUpdateLog?(fieldId: string): Promise<any>;
 }
 
 
@@ -457,6 +458,36 @@ export class SupabaseService implements FieldService {
     }));
   }
 
+  async getLastUpdateLog(fieldId: string): Promise<any> {
+    await this.isOnline();
+    if (!this.userId) return null;
+
+    if (!fieldId || fieldId.startsWith('poly-') || fieldId.startsWith('source-')) {
+      return null;
+    }
+
+    const { data, error } = await supabase
+      .from('change_logs')
+      .select(`
+        created_at,
+        action,
+        profiles (
+          display_name
+        )
+      `)
+      .eq('field_id', fieldId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error fetching last update log:', error);
+      return null;
+    }
+
+    return data;
+  }
+
   // ダミー（グループ化用 - 元の実装に続く）
   _groupPolygonsPlaceholder() {
   }
@@ -613,6 +644,10 @@ export class GuestService extends SupabaseService {
   // 未着手のマスタデータ（source_polygons単体）は取得しない（空配列を返す）ようにオーバーライドする
   async getSourcePolygonsInBbox(_west: number, _south: number, _east: number, _north: number): Promise<any[]> {
     return [];
+  }
+
+  async getLastUpdateLog(_fieldId: string): Promise<any> {
+    return null;
   }
 }
 

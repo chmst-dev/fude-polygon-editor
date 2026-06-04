@@ -7,15 +7,17 @@ import { Search, MapPin } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
 
 // 文字列から一意の色（HSL）を生成するユーティリティ関数
+// ビット演算のオーバーフローを避けるため、モジュロ算術で安全に色相を計算する
 function stringToHslColor(str: string, s: number, l: number) {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    // 黄金角比（137/360）を用いた乗算で、近い文字列でも色相が大きく離れるよう分散させる
+    // ビット演算を使わず通常の加算でオーバーフローを回避
+    hash = (hash * 31 + str.charCodeAt(i)) % 360;
   }
-  // 360と互いに素であり、黄金角(約137.5度)に近い137を乗算することで、
-  // 連番（テスト太郎2, テスト太郎3など）のわずかなハッシュ値の差でも色相が大きく離れるように分散させます
-  const h = (Math.abs(hash) * 137) % 360;
-  return `hsl(${h}, ${s}%, ${l}%)`;
+  // 黄金角(137.508°)を掛けてさらに分散させ、よく似た名前でも異なる色になるようにする
+  const h = (hash * 137.508) % 360;
+  return `hsl(${Math.floor(h)}, ${s}%, ${l}%)`;
 }
 
 // ポリゴン配列の状態（IDと生産者名）から簡易ハッシュを生成し、状態変化時にGeoJSONを強制再描画させる
@@ -142,6 +144,8 @@ function MapEvents({ isAddingPoint, setIsAddingPoint, selectedPolygonId, setPoin
 
 function MapZoomController({ selectedPolygonId, polygons }: any) {
   const map = useMap();
+  // 前回フライトした圃場IDを記録し、同じIDへの不要な再フライトを防ぐ
+  const lastFlownIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const t1 = setTimeout(() => map.invalidateSize(), 100);
@@ -153,17 +157,25 @@ function MapZoomController({ selectedPolygonId, polygons }: any) {
   }, [map]);
 
   useEffect(() => {
-    if (selectedPolygonId) {
-      const polygon = polygons.find((p: any) => p.internalId === selectedPolygonId);
-      if (polygon?.geometry) {
-        try {
-          const geoJsonLayer = L.geoJSON(polygon.geometry);
-          const bounds = geoJsonLayer.getBounds();
-          if (bounds.isValid()) {
-            map.flyToBounds(bounds, { padding: [50, 50], maxZoom: 18, duration: 0.5 });
-          }
-        } catch (e) {}
-      }
+    // selectedPolygonId が変わった時だけフライトする（polygons の更新では再発火しない）
+    if (!selectedPolygonId) {
+      lastFlownIdRef.current = null;
+      return;
+    }
+    if (lastFlownIdRef.current === selectedPolygonId) {
+      // 同じ圃場のまま polygons 配列だけ更新された場合はスキップ
+      return;
+    }
+    const polygon = polygons.find((p: any) => p.internalId === selectedPolygonId);
+    if (polygon?.geometry) {
+      try {
+        const geoJsonLayer = L.geoJSON(polygon.geometry);
+        const bounds = geoJsonLayer.getBounds();
+        if (bounds.isValid()) {
+          lastFlownIdRef.current = selectedPolygonId;
+          map.flyToBounds(bounds, { padding: [50, 50], maxZoom: 18, duration: 0.5 });
+        }
+      } catch (e) {}
     }
   }, [selectedPolygonId, polygons, map]);
 
