@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- 背景 -->
+  <rect width="64" height="64" rx="12" fill="#16a34a"/>
+  <!-- 田んぼポリゴン（白いアウトラインの圃場形状） -->
+  <polygon points="12,44 22,18 50,14 54,38 36,52" fill="#bbf7d0" stroke="white" stroke-width="2.5" stroke-linejoin="round"/>
+  <!-- 内部の区画線 -->
+  <line x1="22" y1="18" x2="36" y2="52" stroke="white" stroke-width="1.5" stroke-dasharray="3,2" opacity="0.7"/>
+  <line x1="12" y1="44" x2="50" y2="14" stroke="white" stroke-width="1.5" stroke-dasharray="3,2" opacity="0.7"/>
+  <!-- 位置ピン -->
+  <circle cx="49" cy="48" r="9" fill="white"/>
+  <circle cx="49" cy="46" r="5" fill="#ef4444"/>
+  <polygon points="44,50 54,50 49,57" fill="#ef4444"/>
+</svg>
