@@ -270,6 +270,7 @@ export default function LeafletMap({
   isGuestMode = false,
   onGuestFieldClick,
   onGuestPointClick,
+  setActiveTab,
 }: any) {
   // ビューポート内に絞り込まれたポリゴン
   const [visiblePolygons, setVisiblePolygons] = useState<any[]>([]);
@@ -416,6 +417,28 @@ export default function LeafletMap({
                   </div>
                 )}
                 {pt.description && <div className="text-xs text-slate-600 mt-1.5">{pt.description}</div>}
+                {(() => {
+                  const field = polygons.find((p: any) => p.internalId === pt.fieldInternalId);
+                  if (!field) return null;
+                  return (
+                    <div className="mt-2 pt-2 border-t border-slate-105 flex items-center justify-between text-[11px] gap-2">
+                      <span className="text-slate-500 font-bold max-w-[110px] truncate">
+                        圃場: {field.fieldName || field.producerName || '名称未設定'}
+                      </span>
+                      <button
+                        onClick={() => {
+                          setSelectedPolygonId(pt.fieldInternalId);
+                          if (setActiveTab) {
+                            setActiveTab('edit'); // 編集タブへ切り替え
+                          }
+                        }}
+                        className="text-indigo-600 hover:text-indigo-850 font-extrabold hover:underline whitespace-nowrap"
+                      >
+                        圃場情報へ →
+                      </button>
+                    </div>
+                  );
+                })()}
               </Popup>
             )}
           </Marker>

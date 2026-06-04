@@ -65,6 +65,14 @@ function MainAppInner() {
   const [isMobile, setIsMobile] = useState(false);
   const [mobileTab, setMobileTab] = useState<'map' | 'list' | 'edit' | 'points'>('map');
 
+  // タブ切り替えステートのリフトアップ
+  const [activeTab, setActiveTab] = useState<'list' | 'edit' | 'points' | 'map'>('list');
+
+  const handleSetActiveTab = useCallback((tab: 'list' | 'edit' | 'points' | 'map') => {
+    setActiveTab(tab);
+    setMobileTab(tab); // mobileTabも同期させる
+  }, []);
+
   // サイドバー幅調整用のState
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const isDragging = useRef(false);
@@ -89,12 +97,12 @@ function MainAppInner() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // 圃場選択時にスマホでは自動で編集タブに遷移（編集権限がある場合のみ）
+  // 圃場選択時に自動で編集タブに遷移（編集権限がある場合のみ）
   useEffect(() => {
-    if (selectedPolygonId && isMobile && !isGuestMode) {
-      setMobileTab('edit');
+    if (selectedPolygonId && !isGuestMode) {
+      handleSetActiveTab('edit');
     }
-  }, [selectedPolygonId, isMobile, isGuestMode]);
+  }, [selectedPolygonId, isGuestMode, handleSetActiveTab]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -601,8 +609,8 @@ function MainAppInner() {
             isMobile={isMobile}
             onShowMap={handleShowMap}
             orgId={orgId}
-            activeTabOverride={isMobile ? mobileTab : undefined}
-            setActiveTabOverride={isMobile ? setMobileTab : undefined}
+            activeTabOverride={activeTab}
+            setActiveTabOverride={handleSetActiveTab}
           />
           {/* ドラッグ用ハンドル (PCでのみ表示) */}
           <div onMouseDown={startResizing} className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize bg-slate-200 hover:bg-indigo-400 z-50 transition-colors border-r hidden md:block" title="ドラッグで幅を調整" />
@@ -643,6 +651,7 @@ function MainAppInner() {
               isGuestMode={isGuestMode}
               onGuestFieldClick={isGuestMode ? handleGuestFieldClick : undefined}
               onGuestPointClick={isGuestMode ? handleGuestPointClick : undefined}
+              setActiveTab={handleSetActiveTab}
             />
           </div>
 
@@ -667,14 +676,14 @@ function MainAppInner() {
       {isMobile && (
         <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-white border-t flex justify-around items-center z-40 shadow-xl px-2 pb-1">
           <button 
-            onClick={() => setMobileTab('map')} 
+            onClick={() => handleSetActiveTab('map')} 
             className={`flex flex-col items-center justify-center flex-1 py-1 text-xs font-bold transition-all ${mobileTab === 'map' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
           >
             <Compass size={18} className="mb-0.5" />
             地図
           </button>
           <button 
-            onClick={() => setMobileTab('list')} 
+            onClick={() => handleSetActiveTab('list')} 
             className={`flex flex-col items-center justify-center flex-1 py-1 text-xs font-bold transition-all ${mobileTab === 'list' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
           >
             <Search size={18} className="mb-0.5" />
@@ -684,7 +693,7 @@ function MainAppInner() {
             <>
               <button 
                 disabled={!selectedPolygonId}
-                onClick={() => setMobileTab('edit')} 
+                onClick={() => handleSetActiveTab('edit')} 
                 className={`flex flex-col items-center justify-center flex-1 py-1 text-xs font-bold transition-all disabled:opacity-30 ${mobileTab === 'edit' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
               >
                 <User size={18} className="mb-0.5" />
@@ -692,7 +701,7 @@ function MainAppInner() {
               </button>
               <button 
                 disabled={!selectedPolygonId}
-                onClick={() => setMobileTab('points')} 
+                onClick={() => handleSetActiveTab('points')} 
                 className={`flex flex-col items-center justify-center flex-1 py-1 text-xs font-bold transition-all disabled:opacity-30 ${mobileTab === 'points' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
               >
                 <Target size={18} className="mb-0.5" />
