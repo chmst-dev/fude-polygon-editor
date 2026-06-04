@@ -7,7 +7,7 @@ import { DbServiceFactory, FieldService } from '@/lib/db';
 import { supabase } from '@/lib/supabase';
 import AuthModal from './AuthModal';
 import { ToastProvider, useToast } from './Toast';
-import { User, LogOut, Cloud, Navigation, Compass, Search, Target, MapPin, X, ChevronDown } from 'lucide-react';
+import { User, LogOut, Cloud, Navigation, Compass, Search, Target, MapPin, X, ChevronDown, ExternalLink } from 'lucide-react';
 
 // 内部実装コンポーネント（ToastProviderでラップするために分離）
 function MainAppInner() {
@@ -397,12 +397,10 @@ function MainAppInner() {
     initDb();
   };
 
-  const copyShareUrl = () => {
+  const openViewPage = () => {
     if (user?.profile?.organization_id) {
-      const shareUrl = `${window.location.origin}/?org=${user.profile.organization_id}`;
-      navigator.clipboard.writeText(shareUrl)
-        .then(() => toast.success('閲覧用の共有URLをコピーしました！ログイン不要でマップを共有できます。'))
-        .catch(() => toast.error('コピーに失敗しました。' + shareUrl));
+      const viewUrl = `${window.location.origin}/?org=${user.profile.organization_id}`;
+      window.open(viewUrl, '_blank', 'noopener,noreferrer');
     }
   };
 
@@ -549,13 +547,14 @@ function MainAppInner() {
                       </p>
                     )}
                   </div>
-                  {/* 【追加】共有URLコピーボタン */}
+                  {/* 閲覧ページを開くボタン */}
                   {user.profile?.organization_id && (
                     <button
-                      onClick={copyShareUrl}
+                      onClick={openViewPage}
                       className="flex items-center gap-1 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-150 px-2.5 py-1.5 font-bold text-indigo-700 shadow-sm transition active:scale-95 whitespace-nowrap"
                     >
-                      共有URLコピー
+                      <ExternalLink size={12} />
+                      閲覧ページ
                     </button>
                   )}
                   <button
