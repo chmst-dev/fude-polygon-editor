@@ -333,22 +333,86 @@ export default function Sidebar({
     }
   };
 
-  // フィールドの全テキスト情報をクリアする
-  const handleClearField = () => {
-    if (!selectedPolygon || isGuestMode) return;
-    const confirmed = window.confirm(
-      '入力内容をすべてクリアします。\n（生産者名・圃場名・作物・注意点・備考をすべて空にします）\n\nよろしいですか？'
-    );
-    if (!confirmed) return;
-    setPolygons((prev: any) =>
-      prev.map((p: any) =>
-        p.internalId === selectedPolygonId
-          ? { ...p, producerName: '', fieldName: '', cropType: '', notes: '', remarks: '' }
-          : p
-      )
-    );
-    toast.success('入力内容をクリアしました。保存ボタンで確定してください。');
+  // フィールドをクリア（DBから削除して未着手の状態に戻す）
+  const handleClearField = async () => {
+    if (!selectedPolygon || isGuestMode || !dbService) return;
+
+    const label = selectedPolygon.fieldName || selectedPolygon.producerName || '選択中の圃場';
+    const hasPoints = relatedPoints.length > 0;
+
+    const lines = [
+      `「${label}」の登録情報を削除して未着手の状態に戻します。`,
+      hasPoints ? `※ 関連するポイント ${relatedPoints.length} 件も同時に削除されます。` : '',
+      '',
+      'この操作は元に戻せません。よろしいですか？'
+    ].filter(Boolean).join('\n');
+
+    if (!window.confirm(lines)) return;
+
+    setIsSaving(true);
+    try {
+      // 1. 関連ポイントをDBから削除
+      for (const pt of relatedPoints) {
+        if (!pt.id.startsWith('point-')) {
+          await dbService.deletePoint(pt.id);
+        }
+      }
+
+      // 2. フィールドをDBから削除（UUID＝保存済みの場合のみ）
+      const isRegistered = !isUnsaved(selectedPolygon);
+      if (isRegistered) {
+        await dbService.deleteField(selectedPolygon.internalId);
+      }
+
+      // 3. ローカルのポイントを削除
+      setPoints((prev: any) => prev.filter((pt: any) => pt.fieldInternalId !== selectedPolygonId));
+
+      // 4. ポリゴンを未着手（source polygon）状態に差し戻す
+      //    - sourceFeatureId がある → source polygon として復元
+      //    - ない（完全新規描画など）→ ポリゴン自体を削除して選択解除
+      const sourceId = selectedPolygon.sourceFeatureId;
+      if (sourceId) {
+        const unmappedPolygon = {
+          internalId: sourceId,
+          sourceFeatureId: sourceId,
+          producerName: '',
+          fieldName: '',
+          cropType: '',
+          areaText: selectedPolygon.areaText || '',
+          notes: '',
+          remarks: '',
+          geometry: selectedPolygon.geometry,
+          properties: {
+            isUnmapped: true,
+            originalProperties:
+              selectedPolygon.properties?.sourcePolygons?.[0]?.originalProperties ||
+              selectedPolygon.properties?.originalProperties ||
+              {}
+          }
+        };
+        setPolygons((prev: any) =>
+          prev.map((p: any) => p.internalId === selectedPolygonId ? unmappedPolygon : p)
+        );
+        setSelectedPolygonId(null);
+      } else {
+        setPolygons((prev: any) => prev.filter((p: any) => p.internalId !== selectedPolygonId));
+        setSelectedPolygonId(null);
+      }
+
+      // 5. 最終更新者をリセット
+      setLastUpdate(null);
+
+      // 6. 一覧タブに戻る
+      setActiveTab('list');
+
+      toast.success('圃場情報を削除しました。未着手の状態に戻りました。');
+    } catch (e: any) {
+      toast.error('クリアに失敗しました: ' + e.message);
+    } finally {
+      setIsSaving(false);
+    }
   };
+
 
   const handleSaveField = async () => {
     if (!dbService || isGuestMode || !selectedPolygon) return;
