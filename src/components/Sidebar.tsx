@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect, useCallback } from 'react';
-import { Target, Search, CheckSquare, Square, Layers, Navigation, ExternalLink, MapPin, Camera, Save, Loader2, Clock } from 'lucide-react';
+import { Target, Search, CheckSquare, Square, Layers, Navigation, ExternalLink, MapPin, Camera, Save, Loader2, Clock, Eraser } from 'lucide-react';
 import { calculateArea } from '@/lib/utils';
 import * as turf from '@turf/turf';
 import imageCompression from 'browser-image-compression';
@@ -331,6 +331,23 @@ export default function Sidebar({
     } else {
       setSelectedPolygonIds([...selectedPolygonIds, id]);
     }
+  };
+
+  // フィールドの全テキスト情報をクリアする
+  const handleClearField = () => {
+    if (!selectedPolygon || isGuestMode) return;
+    const confirmed = window.confirm(
+      '入力内容をすべてクリアします。\n（生産者名・圃場名・作物・注意点・備考をすべて空にします）\n\nよろしいですか？'
+    );
+    if (!confirmed) return;
+    setPolygons((prev: any) =>
+      prev.map((p: any) =>
+        p.internalId === selectedPolygonId
+          ? { ...p, producerName: '', fieldName: '', cropType: '', notes: '', remarks: '' }
+          : p
+      )
+    );
+    toast.success('入力内容をクリアしました。保存ボタンで確定してください。');
   };
 
   const handleSaveField = async () => {
@@ -696,16 +713,27 @@ export default function Sidebar({
               );
             })}
 
-            {/* 明示的な保存ボタン */}
+            {/* 明示的な保存ボタン + クリアボタン */}
             {!isGuestMode && (
-              <button 
-                onClick={handleSaveField}
-                disabled={isSaving}
-                className="w-full mt-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl transition shadow-md flex items-center justify-center disabled:opacity-50"
-              >
-                {isSaving ? <Loader2 size={18} className="animate-spin mr-2" /> : <Save size={18} className="mr-2" />}
-                {isSaving ? '保存中...' : 'この圃場を保存する'}
-              </button>
+              <div className="flex flex-col gap-2 mt-4">
+                <button 
+                  onClick={handleSaveField}
+                  disabled={isSaving}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl transition shadow-md flex items-center justify-center disabled:opacity-50"
+                >
+                  {isSaving ? <Loader2 size={18} className="animate-spin mr-2" /> : <Save size={18} className="mr-2" />}
+                  {isSaving ? '保存中...' : 'この圃場を保存する'}
+                </button>
+
+                <button
+                  onClick={handleClearField}
+                  disabled={isSaving}
+                  className="w-full bg-white hover:bg-rose-50 text-rose-500 border border-rose-200 hover:border-rose-400 font-bold py-2.5 rounded-xl transition flex items-center justify-center gap-1.5 text-sm disabled:opacity-40"
+                >
+                  <Eraser size={15} />
+                  入力内容をクリア
+                </button>
+              </div>
             )}
 
             {/* Googleマップ連携ボタンセクション */}
