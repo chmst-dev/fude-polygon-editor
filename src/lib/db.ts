@@ -97,9 +97,39 @@ export class SupabaseService implements FieldService {
       }
     }
 
+    // 名称未設定かつ情報が一切ない不要な登録済み圃場（ゴミデータ）を自動クリーンアップする。
+    // producer_name, field_name, crop_type, notes がすべて空のものを対象とする。
+    let filteredData = data || [];
+    if (this.userOrgId && data && data.length > 0) {
+      const emptyFields = data.filter((f: any) => 
+        (!f.producer_name || f.producer_name.trim() === '') &&
+        (!f.field_name || f.field_name.trim() === '') &&
+        (!f.crop_type || f.crop_type.trim() === '') &&
+        (!f.notes || f.notes.trim() === '')
+      );
+
+      if (emptyFields.length > 0) {
+        const idsToDelete = emptyFields.map((f: any) => f.id);
+        console.log(`[自動クリーンアップ] 情報が空の不要な圃場が ${idsToDelete.length} 件あります。削除します...`, idsToDelete);
+        
+        // バックグラウンドで一括削除を実行（CASCADE制約により、紐づくpointsも自動削除される）
+        supabase
+          .from('fields')
+          .delete()
+          .in('id', idsToDelete)
+          .then(({ error: e }) => {
+            if (e) console.error('[自動クリーンアップ] 削除エラー:', e);
+            else console.log(`[自動クリーンアップ完了] ${idsToDelete.length} 件の不要な圃場を削除しました。`);
+          });
+
+        // 今回返すデータから、削除対象のレコードを除外する
+        filteredData = data.filter((f: any) => !idsToDelete.includes(f.id));
+      }
+    }
+
     // ユーザーが編集済みの fields のみ返す
     // 未着手の筆ポリゴンはビューポートに応じて getSourcePolygonsInBbox() で別途取得する
-    return this.transformFields(data);
+    return this.transformFields(filteredData);
   }
 
   protected transformFields(data: any[]) {
