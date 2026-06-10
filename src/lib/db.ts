@@ -25,15 +25,35 @@ export class SupabaseService implements FieldService {
   protected userId: string | null = null;
 
   async isOnline() {
-    const { data: { session } } = await supabase.auth.getSession();
+    // モバイル環境で auth.getSession() が無限に待ち続けるケースに対応するため
+    // 8 秒のタイムアウトを設定する。タイムアウト時はセッションなしとして続行。
+    let session: any = null;
+    try {
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('auth.getSession timeout')), 8000)
+      );
+      const result = await Promise.race([
+        supabase.auth.getSession(),
+        timeoutPromise
+      ]) as any;
+      session = result?.data?.session ?? null;
+    } catch (e) {
+      console.warn('[SupabaseService.isOnline] getSession タイムアウトまたはエラー:', e);
+      return false;
+    }
+
     if (session?.user) {
       this.userId = session.user.id;
-      const { data } = await supabase
-        .from('profiles')
-        .select('organization_id')
-        .eq('id', this.userId)
-        .single();
-      this.userOrgId = data?.organization_id || null;
+      try {
+        const { data } = await supabase
+          .from('profiles')
+          .select('organization_id')
+          .eq('id', this.userId)
+          .single();
+        this.userOrgId = data?.organization_id || null;
+      } catch (e) {
+        console.warn('[SupabaseService.isOnline] profiles 取得エラー:', e);
+      }
       return true;
     }
     return false;
@@ -724,8 +744,17 @@ export class DbServiceFactory {
     }
 
     // 今後は常にSupabaseServiceを使用する
+    // 10 秒以内に isOnline() が完了しない場合（モバイルでのハング対策）は
+    // 未ログイン状態として SupabaseService をそのまま返す
     const supabaseService = new SupabaseService();
-    await supabaseService.isOnline();
+    try {
+      const timeoutPromise = new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error('getService timeout')), 10000)
+      );
+      await Promise.race([supabaseService.isOnline(), timeoutPromise]);
+    } catch (e) {
+      console.warn('[DbServiceFactory.getService] タイムアウトまたはエラー。未ログイン状態で続行します:', e);
+    }
     return supabaseService;
   }
 }
