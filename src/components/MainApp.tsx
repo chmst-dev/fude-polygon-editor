@@ -214,34 +214,54 @@ function MainAppInner() {
   // DBサービス初期化とDBが変わったらキャッシュをリセット
   const initDb = useCallback(async () => {
     setLoadingMsg("データ読み込み中...");
+
+    // STEP 1: DBサービスの取得。これだけは確実に行い、失敗時はエラーを表示して終了する。
+    // ここで dbService がセットされないと、画面が「読み込み中...」のまま固まるため、
+    // 必ず finally でメッセージをクリアしてから return する。
+    let service: FieldService;
     try {
-      const service = await DbServiceFactory.getService();
+      service = await DbServiceFactory.getService();
       setDbService(service);
-      
+    } catch (e) {
+      console.error('[initDb] DBサービスの初期化に失敗しました:', e);
+      setLoadingMsg("");
+      return;
+    }
+
+    // STEP 2: 認証セッションとプロフィール取得（失敗してもアプリは続行する）
+    try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        const { data: profile } = await supabase
+        const { data: profile, error: profileError } = await supabase
           .from('profiles')
           .select('*, organizations(name)')
           .eq('id', session.user.id)
           .single();
-        setUser({ ...session.user, profile });
+        if (profileError) {
+          console.warn('[initDb] プロフィール取得エラー（続行します）:', profileError);
+        }
+        setUser({ ...session.user, profile: profile ?? null });
       } else {
         setUser(null);
       }
+    } catch (e) {
+      console.warn('[initDb] 認証情報の取得に失敗しました（続行します）:', e);
+      setUser(null);
+    }
 
-      const loadedPolygons = await service.getFields(); // 編集済みfieldのみ
+    // STEP 3: 圃場データとポイントデータの取得（失敗しても空配列で続行する）
+    try {
+      const loadedPolygons = await service.getFields();
       const loadedPoints = await service.getPoints();
-      
-      // 編集済みfieldsをキャッシュに追加
+
       polygonCacheRef.current = new Map(loadedPolygons.map(p => [p.internalId, p]));
       setPolygons(loadedPolygons);
       setPoints(loadedPoints);
-      
+
       prevPolygonsRef.current = loadedPolygons;
       prevPointsRef.current = loadedPoints;
     } catch (e) {
-      console.error(e);
+      console.error('[initDb] データ取得に失敗しました:', e);
     } finally {
       setLoadingMsg("");
     }
