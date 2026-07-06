@@ -692,8 +692,7 @@ export class SupabaseService implements FieldService {
       .select(`
         id, field_id, work_type_id, status, worked_on, notes,
         created_by, created_at, updated_at,
-        work_types!inner(code, name, icon_key, color),
-        profiles(display_name)
+        work_types!inner(code, name, icon_key, color)
       `)
       .single();
 
@@ -711,7 +710,9 @@ export class SupabaseService implements FieldService {
       workedOn: data.worked_on ?? null,
       notes: data.notes ?? null,
       createdBy: data.created_by ?? null,
-      creatorName: (data.profiles as any)?.display_name ?? null,
+      // The authoritative history refresh resolves creatorName via the RPC.
+      // created_by references auth.users, so PostgREST cannot embed profiles here.
+      creatorName: null,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
     };

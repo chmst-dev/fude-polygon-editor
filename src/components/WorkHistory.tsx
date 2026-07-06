@@ -85,7 +85,11 @@ export default function WorkHistory({
       onRecordChanged?.();
       resetForm();
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '保存に失敗しました。';
+      const msg = e instanceof Error
+        ? e.message
+        : typeof e === 'object' && e !== null && 'message' in e && typeof e.message === 'string'
+          ? e.message
+          : '保存に失敗しました。';
       setSaveError(msg);
     } finally {
       setSaving(false);
