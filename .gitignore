@@ -46,3 +46,5 @@ workspace-*.json
 *.csv
 fude_kazo.json
 
+# supabase backup
+supabase_backup/

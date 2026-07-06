@@ -1,10 +1,6 @@
 -- ============================================================
 -- 追加マイグレーション: 作業履歴・圃場統合機能
--- add_work_features.sql
--- ============================================================
--- 適用方法: Supabase ダッシュボード → SQL Editor で全文実行
--- ============================================================
-
+-- 20260706073618_add_work_features.sql
 -- ============================================================
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -63,8 +59,6 @@ CREATE TABLE IF NOT EXISTS public.share_links (
   is_active boolean NOT NULL DEFAULT true, -- 失効/有効フラグ
   created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
-
-
 
 -- 検索・最新作業判定用インデックス
 CREATE INDEX IF NOT EXISTS field_work_records_field_id_idx
@@ -393,10 +387,10 @@ BEGIN
     IF p_share_token IS NULL THEN
       RAISE EXCEPTION 'UNAUTHORIZED: 匿名アクセスには共有トークンの指定が必要です。';
     END IF;
-    
+
     -- トークンのハッシュ化と検証
     v_token_hash := encode(sha256(p_share_token::bytea), 'hex');
-    
+
     SELECT organization_id INTO v_org_id
     FROM public.share_links
     WHERE token_hash = v_token_hash
@@ -488,10 +482,10 @@ BEGIN
     IF p_share_token IS NULL THEN
       RAISE EXCEPTION 'UNAUTHORIZED: 匿名アクセスには共有トークンの指定が必要です。';
     END IF;
-    
+
     -- トークンのハッシュ化と検証
     v_token_hash := encode(sha256(p_share_token::bytea), 'hex');
-    
+
     SELECT organization_id INTO v_org_id
     FROM public.share_links
     WHERE token_hash = v_token_hash
@@ -629,15 +623,15 @@ CREATE POLICY "source_polygons_update_authenticated" ON public.source_polygons F
 -- Storage (point_images)
 DROP POLICY IF EXISTS "point_images_insert_authenticated" ON storage.objects;
 CREATE POLICY "point_images_insert_authenticated" ON storage.objects FOR INSERT WITH CHECK (
-  bucket_id = 'point_images' 
-  AND auth.role() = 'authenticated' 
+  bucket_id = 'point_images'
+  AND auth.role() = 'authenticated'
   AND (SELECT role FROM public.profiles WHERE id = auth.uid()) IN ('admin', 'org_admin')
 );
 
 DROP POLICY IF EXISTS "point_images_delete_authenticated" ON storage.objects;
 CREATE POLICY "point_images_delete_authenticated" ON storage.objects FOR DELETE USING (
-  bucket_id = 'point_images' 
-  AND auth.role() = 'authenticated' 
+  bucket_id = 'point_images'
+  AND auth.role() = 'authenticated'
   AND (SELECT role FROM public.profiles WHERE id = auth.uid()) IN ('admin', 'org_admin')
 );
 
@@ -702,8 +696,8 @@ DROP POLICY IF EXISTS "field_points_select_all" ON public.field_points;
 DROP POLICY IF EXISTS "field_points_select_own_org" ON public.field_points;
 CREATE POLICY "field_points_select_own_org" ON public.field_points FOR SELECT USING (
   auth.role() = 'authenticated' AND (public.get_my_role() = 'admin' OR EXISTS (
-    SELECT 1 FROM public.fields f 
-    WHERE f.id = field_points.field_id 
+    SELECT 1 FROM public.fields f
+    WHERE f.id = field_points.field_id
       AND f.organization_id = public.get_my_org_id()
   ))
 );
@@ -713,8 +707,8 @@ DROP POLICY IF EXISTS "fsp_select_all" ON public.field_source_polygons;
 DROP POLICY IF EXISTS "fsp_select_own_org" ON public.field_source_polygons;
 CREATE POLICY "fsp_select_own_org" ON public.field_source_polygons FOR SELECT USING (
   auth.role() = 'authenticated' AND (public.get_my_role() = 'admin' OR EXISTS (
-    SELECT 1 FROM public.fields f 
-    WHERE f.id = field_source_polygons.field_id 
+    SELECT 1 FROM public.fields f
+    WHERE f.id = field_source_polygons.field_id
       AND f.organization_id = public.get_my_org_id()
   ))
 );
@@ -862,3 +856,51 @@ BEGIN
   WHERE f.organization_id = v_org_id;
 END;
 $$;
+
+-- ============================================================
+-- PART 6: SECURITY DEFINER 関数の不要な PUBLIC 実行権限の剥奪と明示的な許可設定
+-- ============================================================
+
+-- 1. 内部ヘルパー関数 (authenticated / service_role のみ実行可能)
+REVOKE EXECUTE ON FUNCTION public.get_my_role() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_my_role() TO authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.get_my_org_id() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_my_org_id() TO authenticated, service_role;
+
+-- 2. トリガー用関数 (service_role のみ実行可能)
+REVOKE EXECUTE ON FUNCTION public.handle_new_user() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.handle_new_user() TO service_role;
+
+-- 3. 一般取得 RPC (anon は実行不可、authenticated / service_role のみ)
+REVOKE EXECUTE ON FUNCTION public.get_source_polygons_in_bbox(double precision, double precision, double precision, double precision) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_source_polygons_in_bbox(double precision, double precision, double precision, double precision) TO authenticated, service_role;
+
+-- 4. 管理用 RPC (authenticated / service_role のみ実行可能)
+REVOKE EXECUTE ON FUNCTION public.merge_fields(uuid, uuid[], jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.merge_fields(uuid, uuid[], jsonb) TO authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.create_share_link(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.create_share_link(uuid) TO authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.revoke_share_links(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.revoke_share_links(uuid) TO authenticated, service_role;
+
+-- 5. 共有トークンを用いた閲覧用 RPC (anon / authenticated / service_role 全て実行可能)
+REVOKE EXECUTE ON FUNCTION public.get_field_ids_by_work_type(uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_field_ids_by_work_type(uuid, text) TO anon, authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.get_latest_work_records(uuid[], text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_latest_work_records(uuid[], text) TO anon, authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.get_field_work_records(uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_field_work_records(uuid, text) TO anon, authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.get_fields_by_share_token(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_fields_by_share_token(text) TO anon, authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.get_points_by_share_token(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_points_by_share_token(text) TO anon, authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.get_field_source_polygons_by_share_token(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_field_source_polygons_by_share_token(text) TO anon, authenticated, service_role;

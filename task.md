@@ -37,3 +37,13 @@
 - [x] viewerから共有リンク管理UIを非表示
 - [x] 旧 `?org=` 共有導線を廃止し、`?share=` のみに統一
 - [x] 共有リンク生成・失効RPCの `search_path` を固定
+
+## Supabase マイグレーション移行 & クリーンアップ
+- [x] 実環境スキーマのバックアップ取得（Git管理外への退避）
+- [x] 実環境現在スキーマのベースライン化（マイグレーション定義の自動生成と補正）
+- [x] 新規機能SQLのマイグレーション移行（ストレージポリシーの分離とDROP POLICY追加）
+- [x] 既存SQLファイル整理（legacy/およびdiagnostics/フォルダへ退避）
+- [x] SQL Editorの不要スニペット削除完了、Public Policy Listingのみ保持
+- [x] ローカルDBでの検証（db reset のエラー解消、db diff --linked による差分ゼロ確認）
+- [x] アプリ検証（lint, tsc, buildチェック通過確認）
+- [ ] ロール別E2E手動チェックリストによる確認 【ユーザー確認待ち】

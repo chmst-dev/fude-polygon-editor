@@ -915,3 +915,51 @@ CREATE POLICY "point_images_delete_authenticated" ON storage.objects FOR DELETE 
   AND auth.role() = 'authenticated'
   AND (SELECT role FROM public.profiles WHERE id = auth.uid()) IN ('admin', 'org_admin')
 );
+
+-- ============================================================
+-- SECURITY DEFINER 関数の不要な PUBLIC 実行権限の剥奪と明示的な許可設定
+-- ============================================================
+
+-- 1. 内部ヘルパー関数 (authenticated / service_role のみ)
+REVOKE EXECUTE ON FUNCTION public.get_my_role() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_my_role() TO authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.get_my_org_id() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_my_org_id() TO authenticated, service_role;
+
+-- 2. トリガー用関数 (service_role のみ)
+REVOKE EXECUTE ON FUNCTION public.handle_new_user() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.handle_new_user() TO service_role;
+
+-- 3. 一般取得 RPC (authenticated / service_role のみ)
+REVOKE EXECUTE ON FUNCTION public.get_source_polygons_in_bbox(double precision, double precision, double precision, double precision) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_source_polygons_in_bbox(double precision, double precision, double precision, double precision) TO authenticated, service_role;
+
+-- 4. 管理用 RPC (authenticated / service_role のみ)
+REVOKE EXECUTE ON FUNCTION public.merge_fields(uuid, uuid[], jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.merge_fields(uuid, uuid[], jsonb) TO authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.create_share_link(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.create_share_link(uuid) TO authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.revoke_share_links(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.revoke_share_links(uuid) TO authenticated, service_role;
+
+-- 5. 共有トークンを用いた閲覧用 RPC (anon / authenticated / service_role 全て実行可能)
+REVOKE EXECUTE ON FUNCTION public.get_field_ids_by_work_type(uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_field_ids_by_work_type(uuid, text) TO anon, authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.get_latest_work_records(uuid[], text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_latest_work_records(uuid[], text) TO anon, authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.get_field_work_records(uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_field_work_records(uuid, text) TO anon, authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.get_fields_by_share_token(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_fields_by_share_token(text) TO anon, authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.get_points_by_share_token(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_points_by_share_token(text) TO anon, authenticated, service_role;
+
+REVOKE EXECUTE ON FUNCTION public.get_field_source_polygons_by_share_token(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_field_source_polygons_by_share_token(text) TO anon, authenticated, service_role;
