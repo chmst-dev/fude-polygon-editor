@@ -1,5 +1,6 @@
 'use client';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import * as turf from '@turf/turf';
 import Sidebar from './Sidebar';
 import MapArea from './MapArea';
 import { parseGeoJSON, exportToCSV, exportToGeoJSON, exportToKML } from '@/lib/utils';
@@ -7,13 +8,16 @@ import { DbServiceFactory, FieldService } from '@/lib/db';
 import { supabase } from '@/lib/supabase';
 import AuthModal from './AuthModal';
 import { ToastProvider, useToast } from './Toast';
-import { User, LogOut, Cloud, Navigation, Compass, Search, Target, MapPin, X, ChevronDown, ExternalLink } from 'lucide-react';
+import { User, LogOut, Cloud, Navigation, Compass, Search, Target, MapPin, X, ChevronDown, ExternalLink, Share2 } from 'lucide-react';
+import { useWorkTypes } from '@/hooks/useWorkTypes';
+import { useLatestWorkRecords } from '@/hooks/useWorkRecords';
+import type { FieldFilter } from '@/types';
 
 // 内部実装コンポーネント（ToastProviderでラップするために分離）
 function MainAppInner() {
   const [polygons, setPolygons] = useState<any[]>([]);
   const [points, setPoints] = useState<any[]>([]);
-  
+
   // 文字サイズ調整用のステート ('sm' | 'base' | 'lg' | 'xl')
   const [fontSize, setFontSize] = useState<'sm' | 'base' | 'lg' | 'xl'>('base');
 
@@ -54,12 +58,69 @@ function MainAppInner() {
   const [dbService, setDbService] = useState<FieldService | null>(null);
   const [user, setUser] = useState<any>(null);
 
+  // 検索フィルター（生産者・作業項目）— MainApp で一元管理
+  const [fieldFilter, setFieldFilter] = useState<FieldFilter>({ producerName: '', workTypeId: '' });
+
   // URLパラメータから初期ゲスト判定を行う（DB初期化前の高速適用のため）
-  const isGuestByUrl = typeof window !== 'undefined' && (new URLSearchParams(window.location.search).has('org') || new URLSearchParams(window.location.search).has('share'));
+  const isGuestByUrl = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('share');
 
   // 閲覧専用ゲストモードかどうか
   const isGuestMode = dbService?.isReadOnly() || isGuestByUrl;
-  const orgId = user?.profile?.organization_id || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('org') : null);
+  const orgId = user?.profile?.organization_id ?? null;
+
+  // 編集権限: ログイン済み + role が admin または org_admin
+  const canEdit = !isGuestMode && !!user && ['admin', 'org_admin'].includes(user.profile?.role ?? '');
+
+  // 作業種別（アプリ起動時に1回取得）
+  const { workTypes } = useWorkTypes(dbService);
+
+  // 圃場の最新作業履歴（一括取得、N+1禁止）
+  const registeredPolygonIds = polygons
+    .filter((p) => p.internalId && !p.internalId.startsWith('poly-') && !p.internalId.startsWith('source-') && !p.internalId.includes('-group-'))
+    .map((p) => p.internalId as string);
+
+  const { recordMap: latestWorkRecordMap, refresh: refreshWorkRecords } = useLatestWorkRecords(
+    dbService,
+    registeredPolygonIds,
+  );
+
+  // 作業項目でフィルタされた圃場IDリストの取得
+  const [fieldsWithSelectedWorkType, setFieldsWithSelectedWorkType] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!dbService || !fieldFilter.workTypeId) {
+      setFieldsWithSelectedWorkType([]);
+      return;
+    }
+    dbService.getFieldIdsByWorkType(fieldFilter.workTypeId)
+      .then((ids) => {
+        setFieldsWithSelectedWorkType(ids);
+      })
+      .catch((e) => {
+        console.error('Error fetching fields by work type:', e);
+      });
+  }, [dbService, fieldFilter.workTypeId]);
+
+  // フィルタリング済み圃場ID（一覧・地図・作業アイコンに同じ条件を適用）
+  const filteredPolygonIds = (() => {
+    const hasProducerFilter = fieldFilter.producerName.trim() !== '';
+    const hasWorkTypeFilter = fieldFilter.workTypeId !== '';
+    if (!hasProducerFilter && !hasWorkTypeFilter) return null; // null = 全件表示
+
+    return polygons
+      .filter((p) => {
+        // 生産者フィルター（部分一致）
+        if (hasProducerFilter) {
+          if (!p.producerName?.includes(fieldFilter.producerName.trim())) return false;
+        }
+        // 作業項目フィルター（過去履歴に合致する作業項目が1件以上存在するか）
+        if (hasWorkTypeFilter) {
+          if (!fieldsWithSelectedWorkType.includes(p.internalId)) return false;
+        }
+        return true;
+      })
+      .map((p) => p.internalId as string);
+  })();
 
   // スマホレスポンシブ用のステート
   const [isMobile, setIsMobile] = useState(false);
@@ -267,6 +328,13 @@ function MainAppInner() {
     }
   }, []);
 
+  const handleMergeSuccess = useCallback(async (mergedFieldId: string) => {
+    await initDb();
+    setSelectedPolygonId(mergedFieldId);
+    handleSetActiveTab('edit');
+    refreshWorkRecords();
+  }, [initDb, refreshWorkRecords, handleSetActiveTab]);
+
   useEffect(() => {
     initDb();
 
@@ -308,7 +376,7 @@ function MainAppInner() {
         if (isSavingFieldRef.current.has(id)) continue; // すでに保存中なら多重実行をスキップ
 
         const prev = prevPolygonsRef.current.find(p => p.internalId === id);
-        
+
         // 差分がなければ完全にスルー
         if (prev && JSON.stringify(prev) === JSON.stringify(poly)) {
           continue;
@@ -325,25 +393,25 @@ function MainAppInner() {
               return acc;
             }, {} as any)
           };
-          
+
           const saved = await dbService.saveField(fieldData);
-          
+
           // 保存が完了したタイミングで、同期的に prevRef を即座に更新 (再発火時の誤判定を防ぐ)
           prevPolygonsRef.current = prevPolygonsRef.current.map(p => p.internalId === id ? saved : p);
-          
+
           // IDが変わった新規インサート時のみ React State を更新 (既存更新時はStateはすでに最新なので再セット不要＝無限ループを回避)
           if (saved.internalId !== id) {
             setPolygons(prevPolys => prevPolys.map(p => p.internalId === id ? saved : p));
             if (selectedPolygonId === id) {
               setSelectedPolygonId(saved.internalId);
             }
-            
+
             // 【バグ修正】: 関連する未保存ポイントの fieldInternalId も新しいUUIDに更新する
-            setPoints(prevPts => prevPts.map(pt => 
+            setPoints(prevPts => prevPts.map(pt =>
               pt.fieldInternalId === id ? { ...pt, fieldInternalId: saved.internalId } : pt
             ));
             // prevRefも追従更新（差分検知で不整合を起こさないため）
-            prevPointsRef.current = prevPointsRef.current.map(pt => 
+            prevPointsRef.current = prevPointsRef.current.map(pt =>
               pt.fieldInternalId === id ? { ...pt, fieldInternalId: saved.internalId } : pt
             );
           }
@@ -362,10 +430,10 @@ function MainAppInner() {
         const prev = prevPointsRef.current.find(p => p.id === id);
         // すでに保存済み(UUID)かつ変更がなければスキップ
         // ※ただし未保存(point-始まり)で、かつ圃場側が保存済み(poly- / source- 以外)になった場合は保存処理に回す
-        const isUnsavedPointWithSavedField = pt.id.startsWith('point-') && 
-          !pt.fieldInternalId.startsWith('poly-') && 
+        const isUnsavedPointWithSavedField = pt.id.startsWith('point-') &&
+          !pt.fieldInternalId.startsWith('poly-') &&
           !pt.fieldInternalId.startsWith('source-');
-        
+
         if (!isUnsavedPointWithSavedField && prev && JSON.stringify(prev) === JSON.stringify(pt)) {
           continue;
         }
@@ -375,7 +443,7 @@ function MainAppInner() {
         try {
           const saved = await dbService.savePoint(pt);
           prevPointsRef.current = prevPointsRef.current.map(p => p.id === id ? saved : p);
-          
+
           if (saved.id !== id) {
             setPoints(prevPts => prevPts.map(p => p.id === id ? saved : p));
           }
@@ -417,10 +485,69 @@ function MainAppInner() {
     initDb();
   };
 
-  const openViewPage = () => {
-    if (user?.profile?.organization_id) {
-      const viewUrl = `${window.location.origin}/?org=${user.profile.organization_id}`;
-      window.open(viewUrl, '_blank', 'noopener,noreferrer');
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [shareLink, setShareLink] = useState<string | null>(null);
+  const [isGeneratingShare, setIsGeneratingShare] = useState(false);
+  const [hasActiveShare, setHasActiveShare] = useState(false);
+
+  const checkActiveShareLink = async () => {
+    if (!user?.profile?.organization_id) return;
+    try {
+      const { count, error } = await supabase
+        .from('share_links')
+        .select('*', { count: 'exact', head: true })
+        .eq('organization_id', user.profile.organization_id)
+        .eq('is_active', true);
+      if (!error && count !== null) {
+        setHasActiveShare(count > 0);
+      }
+    } catch (e) {
+      console.error('Error checking share links:', e);
+    }
+  };
+
+  const openViewPage = async () => {
+    if (canEdit && user?.profile?.organization_id) {
+      await checkActiveShareLink();
+      setIsShareModalOpen(true);
+    }
+  };
+
+  const handleCreateShareLink = async () => {
+    if (!canEdit || !user?.profile?.organization_id) return;
+    setIsGeneratingShare(true);
+    try {
+      const { data, error } = await supabase.rpc('create_share_link', {
+        p_org_id: user.profile.organization_id
+      });
+      if (error) throw error;
+
+      const fullUrl = `${window.location.origin}/?share=${data}`;
+      setShareLink(fullUrl);
+      setHasActiveShare(true);
+      toast.success('共有リンクを生成しました。一度だけ表示されますので、コピーしてご利用ください。');
+    } catch (e: any) {
+      console.error('Error generating share link:', e);
+      toast.error('共有リンクの生成に失敗しました: ' + (e.message || ''));
+    } finally {
+      setIsGeneratingShare(false);
+    }
+  };
+
+  const handleRevokeShareLink = async () => {
+    if (!canEdit || !user?.profile?.organization_id) return;
+    if (!window.confirm('本当にこの組織のすべての共有リンクを無効化しますか？既存の共有URLからはアクセスできなくなります。')) return;
+    try {
+      const { error } = await supabase.rpc('revoke_share_links', {
+        p_org_id: user.profile.organization_id
+      });
+      if (error) throw error;
+      setShareLink(null);
+      setHasActiveShare(false);
+      toast.success('すべての共有リンクを無効化（失効）しました。');
+    } catch (e: any) {
+      console.error('Error revoking share links:', e);
+      toast.error('共有リンクの無効化に失敗しました: ' + (e.message || ''));
     }
   };
 
@@ -448,7 +575,7 @@ function MainAppInner() {
   // ページタイトルを設定
   useEffect(() => {
     document.title = 'みんなの圃場マップ';
-    
+
     // descriptionメタタグもクライアント側で動的に更新
     const metaDescription = document.querySelector('meta[name="description"]');
     if (metaDescription) {
@@ -474,7 +601,7 @@ function MainAppInner() {
           <h1 className="font-bold text-indigo-700 flex items-center gap-1.5 text-sm md:text-base">
             みんなの圃場マップ
           </h1>
-          
+
 
 
           {user && (
@@ -489,7 +616,7 @@ function MainAppInner() {
           )}
           {loadingMsg && <span className="text-xs md:text-sm font-bold text-red-600 animate-pulse truncate max-w-[120px] md:max-w-none mr-4">{loadingMsg}</span>}
         </div>
-        
+
         <div className="flex items-center space-x-2 md:space-x-4">
           {/* PC専用操作パネル (スマホでは非表示にしてスッキリさせます) */}
           <div className="hidden lg:flex space-x-2 text-xs">
@@ -568,7 +695,7 @@ function MainAppInner() {
                     )}
                   </div>
                   {/* 閲覧ページを開くボタン */}
-                  {user.profile?.organization_id && (
+                  {canEdit && user.profile?.organization_id && (
                     <button
                       onClick={openViewPage}
                       className="flex items-center gap-1 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-150 px-2.5 py-1.5 font-bold text-indigo-700 shadow-sm transition active:scale-95 whitespace-nowrap"
@@ -593,11 +720,11 @@ function MainAppInner() {
 
       {/* メインビューエリア（スマホ時は縦レイアウト、PC時は横並び） */}
       <div className="flex flex-1 overflow-hidden relative flex-col md:flex-row">
-        
+
         {/* 幅調整可能なサイドバー (PCでは横並び、スマホではタブ切り替えで全画面表示) */}
         {/* スマホ時は absolute で地図に重ねる。display:none はサイドバー側のみ使用（Leaflet と無関係なので安全） */}
-        <aside 
-          style={{ 
+        <aside
+          style={{
             width: isMobile ? '100%' : sidebarWidth,
             ...(isMobile ? {
               position: 'absolute' as const,
@@ -608,10 +735,10 @@ function MainAppInner() {
               zIndex: 10,
               display: mobileTab === 'map' ? 'none' : undefined,
             } : {})
-          }} 
+          }}
           className={`bg-white shrink-0 flex flex-col shadow-lg ${
-            isMobile 
-              ? 'w-full pb-16' 
+            isMobile
+              ? 'w-full pb-16'
               : 'relative h-full border-r z-0'
           }`}
         >
@@ -635,15 +762,22 @@ function MainAppInner() {
             orgId={orgId}
             activeTabOverride={activeTab}
             setActiveTabOverride={handleSetActiveTab}
+            canEdit={canEdit}
+            workTypes={workTypes}
+            fieldFilter={fieldFilter}
+            onFilterChange={setFieldFilter}
+            filteredPolygonIds={filteredPolygonIds}
+            onWorkRecordChanged={refreshWorkRecords}
+            onMergeSuccess={handleMergeSuccess}
           />
           {/* ドラッグ用ハンドル (PCでのみ表示) */}
           <div onMouseDown={startResizing} className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize bg-slate-200 hover:bg-indigo-400 z-50 transition-colors border-r hidden md:block" title="ドラッグで幅を調整" />
         </aside>
-        
+
         {/* 地図エリア: スマホ時も display:none は使わず visibility で隠す。
              display:none だと Leaflet がコンテナサイズを 0x0 と認識して
              タイルもポリゴンも表示できなくなるため、常に DOM に存在させる。 */}
-        <section 
+        <section
           style={isMobile ? {
             position: 'absolute' as const,
             top: 0,
@@ -676,6 +810,9 @@ function MainAppInner() {
               onGuestFieldClick={isGuestMode ? handleGuestFieldClick : undefined}
               onGuestPointClick={isGuestMode ? handleGuestPointClick : undefined}
               setActiveTab={handleSetActiveTab}
+              workTypes={workTypes}
+              latestWorkRecords={latestWorkRecordMap}
+              filteredPolygonIds={filteredPolygonIds}
             />
           </div>
 
@@ -684,8 +821,8 @@ function MainAppInner() {
             <button
               onClick={() => setIsTrackingGps(!isTrackingGps)}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl border text-xs font-bold shadow-xl backdrop-blur-md transition-all active:scale-95 ${
-                isTrackingGps 
-                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-indigo-600/20' 
+                isTrackingGps
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-indigo-600/20'
                   : 'bg-white/95 text-slate-700 border-slate-200/80 hover:bg-slate-50'
               }`}
             >
@@ -699,15 +836,15 @@ function MainAppInner() {
       {/* スマホ用下部タブナビゲーションバー（モバイルかつゲスト以外、またはゲストでも閲覧用に表示） */}
       {isMobile && (
         <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-white border-t flex justify-around items-center z-40 shadow-xl px-2 pb-1">
-          <button 
-            onClick={() => handleSetActiveTab('map')} 
+          <button
+            onClick={() => handleSetActiveTab('map')}
             className={`flex flex-col items-center justify-center flex-1 py-1 text-xs font-bold transition-all ${mobileTab === 'map' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
           >
             <Compass size={18} className="mb-0.5" />
             地図
           </button>
-          <button 
-            onClick={() => handleSetActiveTab('list')} 
+          <button
+            onClick={() => handleSetActiveTab('list')}
             className={`flex flex-col items-center justify-center flex-1 py-1 text-xs font-bold transition-all ${mobileTab === 'list' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
           >
             <Search size={18} className="mb-0.5" />
@@ -715,17 +852,17 @@ function MainAppInner() {
           </button>
           {!isGuestMode && (
             <>
-              <button 
+              <button
                 disabled={!selectedPolygonId}
-                onClick={() => handleSetActiveTab('edit')} 
+                onClick={() => handleSetActiveTab('edit')}
                 className={`flex flex-col items-center justify-center flex-1 py-1 text-xs font-bold transition-all disabled:opacity-30 ${mobileTab === 'edit' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
               >
                 <User size={18} className="mb-0.5" />
                 編集
               </button>
-              <button 
+              <button
                 disabled={!selectedPolygonId}
-                onClick={() => handleSetActiveTab('points')} 
+                onClick={() => handleSetActiveTab('points')}
                 className={`flex flex-col items-center justify-center flex-1 py-1 text-xs font-bold transition-all disabled:opacity-30 ${mobileTab === 'points' ? 'text-indigo-600 scale-105' : 'text-slate-400'}`}
               >
                 <Target size={18} className="mb-0.5" />
@@ -773,7 +910,7 @@ function MainAppInner() {
                     <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-2 text-center">
                       <p className="text-[0.6875rem] font-bold text-indigo-600 uppercase tracking-wide">面積</p>
                       <p className="font-bold text-indigo-900 text-xs mt-0.5">
-                        {(() => { try { const a = require('@turf/turf').area(infoPanelPolygon.geometry); return `${(a / 100).toFixed(1)}a`; } catch { return '-'; } })()}
+                        {(() => { try { const a = turf.area(infoPanelPolygon.geometry); return `${(a / 100).toFixed(1)}a`; } catch { return '-'; } })()}
                       </p>
                     </div>
                   )}
@@ -840,6 +977,86 @@ function MainAppInner() {
                 </button>
               </>
             ) : null}
+          </div>
+        </div>
+      )}
+
+      {isShareModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200" style={{ zIndex: 1100 }}>
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl p-6 relative border border-slate-100 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="font-extrabold text-slate-800 text-base flex items-center gap-2">
+                <Share2 className="text-indigo-600" size={16} />
+                マップの共有設定
+              </h3>
+              <button
+                onClick={() => {
+                  setIsShareModalOpen(false);
+                  setShareLink(null);
+                }}
+                className="text-slate-400 hover:text-slate-700 transition p-1 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 leading-relaxed">
+              未ログインの第三者にマップを安全に共有するための「共有URL」を発行・管理できます。
+              失効ボタンを押すと、以前発行したURLからの閲覧権限は即座に無効になります。
+            </p>
+
+            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 text-xs text-slate-600 flex flex-col gap-2">
+              <div className="flex justify-between items-center">
+                <span>現在の状態:</span>
+                <span className={`font-bold px-2 py-0.5 rounded-full ${hasActiveShare ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}`}>
+                  {hasActiveShare ? '共有中' : '未共有'}
+                </span>
+              </div>
+            </div>
+
+            {shareLink && (
+              <div className="flex flex-col gap-1.5 mt-1">
+                <label className="text-xs font-bold text-slate-700">生成された共有URL:</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={shareLink}
+                    className="flex-1 bg-indigo-50 border border-indigo-100 text-xs text-indigo-900 rounded-xl px-3 py-2 select-all focus:outline-none"
+                  />
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(shareLink);
+                      toast.success('共有URLをクリップボードにコピーしました！');
+                    }}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-3.5 py-2 rounded-xl transition shadow-sm whitespace-nowrap active:scale-95 cursor-pointer"
+                  >
+                    コピー
+                  </button>
+                </div>
+                <p className="text-[10px] text-amber-600 font-semibold leading-normal">
+                  ※セキュリティ保護のため、このURLは画面を閉じると二度と表示されません。今すぐコピーしてください。
+                </p>
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-2 mt-4 pt-3 border-t border-slate-100">
+              <button
+                onClick={handleCreateShareLink}
+                disabled={isGeneratingShare}
+                className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs py-2.5 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50 cursor-pointer"
+              >
+                {hasActiveShare ? '新しい共有リンクを再生成' : '共有リンクを新規作成'}
+              </button>
+              {hasActiveShare && (
+                <button
+                  onClick={handleRevokeShareLink}
+                  className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold text-xs py-2.5 px-4 rounded-xl transition active:scale-95 cursor-pointer"
+                >
+                  すべての共有を失効
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import * as turf from '@turf/turf';
+import type { WorkType, FieldWorkRecord, NewWorkRecord, MergeFieldsParams } from '@/types';
 
 export interface FieldService {
   isOnline(): Promise<boolean>;
@@ -16,6 +17,14 @@ export interface FieldService {
   uploadPointImage?(file: File, pointId: string): Promise<string>;
   getProducers?(): Promise<string[]>;
   getLastUpdateLog?(fieldId: string): Promise<any>;
+  // 作業種別・履歴
+  getWorkTypes(): Promise<WorkType[]>;
+  getWorkRecords(fieldIds: string[]): Promise<FieldWorkRecord[]>;
+  saveWorkRecord(record: NewWorkRecord): Promise<FieldWorkRecord>;
+  deleteWorkRecord(id: string): Promise<void>;
+  getFieldIdsByWorkType(workTypeId: string): Promise<string[]>;
+  // 登録済み圃場統合（DBトランザクション）
+  mergeFields(params: MergeFieldsParams): Promise<{ mergedFieldId: string }>;
 }
 
 
@@ -561,10 +570,6 @@ export class SupabaseService implements FieldService {
     return data;
   }
 
-  // ダミー（グループ化用 - 元の実装に続く）
-  _groupPolygonsPlaceholder() {
-  }
-
   protected async logChange(fieldId: string, action: string, oldValues: any, newValues: any) {
     if (!this.userId) return;
     await supabase.from('change_logs').insert({
@@ -574,6 +579,192 @@ export class SupabaseService implements FieldService {
       old_values: oldValues,
       new_values: newValues
     });
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // 作業種別・作業履歴
+  // ────────────────────────────────────────────────────────────
+
+  async getWorkTypes(): Promise<WorkType[]> {
+    const { data, error } = await supabase
+      .from('work_types')
+      .select('id, code, name, icon_key, color, sort_order, is_active')
+      .eq('is_active', true)
+      .order('sort_order');
+
+    if (error) {
+      console.error('Error fetching work_types:', error);
+      return [];
+    }
+
+    return (data || []).map((wt: any) => ({
+      id: wt.id,
+      code: wt.code,
+      name: wt.name,
+      iconKey: wt.icon_key,
+      color: wt.color,
+      sortOrder: wt.sort_order,
+      isActive: wt.is_active,
+    }));
+  }
+
+  /**
+   * 複数圃場の作業履歴を一括取得（N+1クエリ禁止）。
+   * get_latest_work_records RPC を使用して各圃場の最新1件を返す。
+   * 全履歴が必要な場合は get_field_work_records RPC を使用する。
+   */
+  async getWorkRecords(fieldIds: string[]): Promise<FieldWorkRecord[]> {
+    if (!fieldIds || fieldIds.length === 0) return [];
+
+    const { data, error } = await supabase.rpc('get_latest_work_records', {
+      p_field_ids: fieldIds,
+      p_share_token: null,
+    });
+
+    if (error) {
+      if ((error as any).code !== 'PGRST202') {
+        console.error('Error fetching work records:', error);
+      }
+      return [];
+    }
+
+    return this.transformWorkRecords(data || []);
+  }
+
+  /**
+   * 特定圃場の全作業履歴を取得（新着順）
+   */
+  async getFieldWorkRecords(fieldId: string): Promise<FieldWorkRecord[]> {
+    if (!fieldId || fieldId.startsWith('poly-') || fieldId.startsWith('source-')) {
+      return [];
+    }
+
+    const { data, error } = await supabase.rpc('get_field_work_records', {
+      p_field_id: fieldId,
+      p_share_token: null,
+    });
+
+    if (error) {
+      if ((error as any).code !== 'PGRST202') {
+        console.error('Error fetching field work records:', error);
+      }
+      return [];
+    }
+
+    return this.transformWorkRecords(data || []);
+  }
+
+  protected transformWorkRecords(data: any[]): FieldWorkRecord[] {
+    return data.map((r: any) => ({
+      id: r.id,
+      fieldId: r.field_id,
+      workTypeId: r.work_type_id,
+      workTypeCode: r.work_type_code,
+      workTypeName: r.work_type_name,
+      workTypeIconKey: r.work_type_icon_key,
+      workTypeColor: r.work_type_color,
+      status: r.status,
+      workedOn: r.worked_on ?? null,
+      notes: r.notes ?? null,
+      createdBy: r.created_by ?? null,
+      creatorName: r.creator_name ?? null,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  async saveWorkRecord(record: NewWorkRecord): Promise<FieldWorkRecord> {
+    await this.isOnline();
+    if (!this.userId || !this.userOrgId) throw new Error('ログインが必要です。');
+
+    const dbRecord = {
+      field_id: record.fieldId,
+      work_type_id: record.workTypeId,
+      status: record.status,
+      worked_on: record.workedOn || null,
+      notes: record.notes || null,
+      created_by: this.userId,
+    };
+
+    const { data, error } = await supabase
+      .from('field_work_records')
+      .insert(dbRecord)
+      .select(`
+        id, field_id, work_type_id, status, worked_on, notes,
+        created_by, created_at, updated_at,
+        work_types!inner(code, name, icon_key, color),
+        profiles(display_name)
+      `)
+      .single();
+
+    if (error) throw error;
+
+    return {
+      id: data.id,
+      fieldId: data.field_id,
+      workTypeId: data.work_type_id,
+      workTypeCode: (data.work_types as any).code,
+      workTypeName: (data.work_types as any).name,
+      workTypeIconKey: (data.work_types as any).icon_key,
+      workTypeColor: (data.work_types as any).color,
+      status: data.status,
+      workedOn: data.worked_on ?? null,
+      notes: data.notes ?? null,
+      createdBy: data.created_by ?? null,
+      creatorName: (data.profiles as any)?.display_name ?? null,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
+  async deleteWorkRecord(id: string): Promise<void> {
+    await this.isOnline();
+    const { error } = await supabase
+      .from('field_work_records')
+      .delete()
+      .eq('id', id);
+    if (error) throw error;
+  }
+
+  async getFieldIdsByWorkType(workTypeId: string): Promise<string[]> {
+    await this.isOnline();
+    if (!this.userId) return [];
+
+    const { data, error } = await supabase.rpc('get_field_ids_by_work_type', {
+      p_work_type_id: workTypeId,
+    });
+
+    if (error) {
+      console.error('[SupabaseService.getFieldIdsByWorkType] error:', error);
+      return [];
+    }
+
+    return (data || []).map((r: any) => r.field_id);
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // 登録済み圃場統合（groupPolygons とは別物・DBトランザクション）
+  // ────────────────────────────────────────────────────────────
+
+  async mergeFields(params: MergeFieldsParams): Promise<{ mergedFieldId: string }> {
+    await this.isOnline();
+    if (!this.userId || !this.userOrgId) throw new Error('ログインが必要です。');
+
+    const { data, error } = await supabase.rpc('merge_fields', {
+      p_target_field_id: params.targetFieldId,
+      p_source_field_ids: params.sourceFieldIds,
+      p_field_data: {
+        producer_name: params.fieldData.producerName,
+        field_name: params.fieldData.fieldName,
+        crop_type: params.fieldData.cropType,
+        notes: params.fieldData.notes,
+        status: params.fieldData.status,
+      },
+    });
+
+    if (error) throw error;
+
+    return { mergedFieldId: data as string };
   }
 
   // 筆ポリゴン（GeoJSON）一括自動保存用（Phase C）
@@ -621,9 +812,12 @@ export class SupabaseService implements FieldService {
 
 // 閲覧用URL（非ログイン共有閲覧機能）に対応した読み取り専用サービス
 export class GuestService extends SupabaseService {
-  constructor(private guestOrgId: string) {
+  private shareToken: string;
+
+  constructor(shareToken: string) {
     super();
-    this.userOrgId = guestOrgId;
+    this.shareToken = shareToken;
+    this.userOrgId = null as any;
   }
 
   async isOnline() {
@@ -635,61 +829,33 @@ export class GuestService extends SupabaseService {
   }
 
   async getFields() {
-    const { data, error } = await supabase
-      .from('fields')
-      .select(`
-        id,
-        organization_id,
-        producer_name,
-        field_name,
-        crop_type,
-        notes,
-        status,
-        field_source_polygons (
-          source_polygon_id,
-          source_polygons (
-            id,
-            geom,
-            area_sqm,
-            original_properties
-          )
-        )
-      `)
-      .eq('organization_id', this.userOrgId);
+    const { data, error } = await supabase.rpc('get_fields_by_share_token', {
+      p_token: this.shareToken
+    });
 
     if (error) {
-      console.error('Error fetching guest fields from Supabase:', error);
+      console.error('Error fetching guest fields from Supabase by share token:', error);
       return [];
+    }
+
+    if (data && data.length > 0) {
+      this.userOrgId = data[0].organization_id;
     }
 
     return this.transformFields(data);
   }
 
   async getPoints() {
-    // 確実に動作させるため、まず組織内の field_id 一覧を取得
-    const { data: fields } = await supabase
-      .from('fields')
-      .select('id')
-      .eq('organization_id', this.userOrgId);
-      
-    if (!fields || fields.length === 0) return [];
-    
-    // field_id の配列を生成
-    const fieldIds = fields.map(f => f.id);
-
-    // .in() クエリは最大要素数に制限があるため、今回は念のため全件取得してからフロント側でフィルタリングする方式で確実に取る
-    const { data, error } = await supabase
-      .from('field_points')
-      .select('*');
+    const { data, error } = await supabase.rpc('get_points_by_share_token', {
+      p_token: this.shareToken
+    });
 
     if (error) {
-      console.error('Error fetching guest points from Supabase:', error);
+      console.error('Error fetching guest points from Supabase by share token:', error);
       return [];
     }
 
-    // 自分の組織の field_id に合致するものだけ抽出
-    const filteredPoints = (data || []).filter((pt: any) => fieldIds.includes(pt.field_id));
-    return this.transformPoints(filteredPoints);
+    return this.transformPoints(data || []);
   }
 
   async saveField(field: any) {
@@ -712,15 +878,90 @@ export class GuestService extends SupabaseService {
     throw new Error('閲覧専用モードのため、結合グループ化はできません。');
   }
 
-  // ゲストも筆ポリゴン（source_polygons）は閲覧可能 → 親クラスの実装をそのまま使用...とはせず、
-  // 共有URLでは登録済みの圃場（fields）だけを見せるという要件のため、
-  // 未着手のマスタデータ（source_polygons単体）は取得しない（空配列を返す）ようにオーバーライドする
+  // 共有URLでは登録済みの圃場（fields）だけを見せる。
+  // 未着手のマスタデータ（source_polygons単体）は取得しない（空配列を返す）。
   async getSourcePolygonsInBbox(_west: number, _south: number, _east: number, _north: number): Promise<any[]> {
     return [];
   }
 
   async getLastUpdateLog(_fieldId: string): Promise<any> {
     return null;
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // 作業履歴・統合: GuestService は読み取り以外すべて拒否
+  // ────────────────────────────────────────────────────────────
+
+  async getWorkTypes(): Promise<WorkType[]> {
+    // work_types は全員参照可（親クラスと同実装）
+    const { data, error } = await supabase
+      .from('work_types')
+      .select('id, code, name, icon_key, color, sort_order, is_active')
+      .eq('is_active', true)
+      .order('sort_order');
+
+    if (error) return [];
+
+    return (data || []).map((wt: any) => ({
+      id: wt.id,
+      code: wt.code,
+      name: wt.name,
+      iconKey: wt.icon_key,
+      color: wt.color,
+      sortOrder: wt.sort_order,
+      isActive: wt.is_active,
+    }));
+  }
+
+  async getWorkRecords(fieldIds: string[]): Promise<FieldWorkRecord[]> {
+    if (!fieldIds || fieldIds.length === 0) return [];
+
+    const { data, error } = await supabase.rpc('get_latest_work_records', {
+      p_field_ids: fieldIds,
+      p_share_token: this.shareToken,
+    });
+
+    if (error) return [];
+    return this.transformWorkRecords(data || []);
+  }
+
+  async getFieldWorkRecords(fieldId: string): Promise<FieldWorkRecord[]> {
+    if (!fieldId || fieldId.startsWith('poly-') || fieldId.startsWith('source-')) {
+      return [];
+    }
+
+    const { data, error } = await supabase.rpc('get_field_work_records', {
+      p_field_id: fieldId,
+      p_share_token: this.shareToken,
+    });
+
+    if (error) return [];
+    return this.transformWorkRecords(data || []);
+  }
+
+  async saveWorkRecord(_record: NewWorkRecord): Promise<FieldWorkRecord> {
+    throw new Error('閲覧専用モードのため、作業登録はできません。');
+  }
+
+  async deleteWorkRecord(_id: string): Promise<void> {
+    throw new Error('閲覧専用モードのため、作業削除はできません。');
+  }
+
+  async getFieldIdsByWorkType(workTypeId: string): Promise<string[]> {
+    const { data, error } = await supabase.rpc('get_field_ids_by_work_type', {
+      p_work_type_id: workTypeId,
+      p_share_token: this.shareToken,
+    });
+
+    if (error) {
+      console.error('[GuestService.getFieldIdsByWorkType] error:', error);
+      return [];
+    }
+    return (data || []).map((r: any) => r.field_id);
+  }
+
+  async mergeFields(_params: MergeFieldsParams): Promise<{ mergedFieldId: string }> {
+    throw new Error('閲覧専用モードのため、圃場統合はできません。');
   }
 }
 
@@ -738,9 +979,9 @@ export class DbServiceFactory {
       localStorage.removeItem('fude-state');
     }
 
-    const orgId = getQueryParam('org') || getQueryParam('share');
-    if (orgId) {
-      return new GuestService(orgId);
+    const shareToken = getQueryParam('share');
+    if (shareToken) {
+      return new GuestService(shareToken);
     }
 
     // 今後は常にSupabaseServiceを使用する
