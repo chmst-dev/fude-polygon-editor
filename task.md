@@ -46,4 +46,4 @@
 - [x] SQL Editorの不要スニペット削除完了、Public Policy Listingのみ保持
 - [x] ローカルDBでの検証（db reset のエラー解消、db diff --linked による差分ゼロ確認）
 - [x] アプリ検証（lint, tsc, buildチェック通過確認）
-- [ ] ロール別E2E手動チェックリストによる確認 【ユーザー確認待ち】
+- [x] ロール別E2E手動チェックリストによる確認
