@@ -1,6 +1,6 @@
 'use client';
-import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { MapContainer, TileLayer, GeoJSON, Marker, Popup, useMapEvents, useMap, LayersControl, Tooltip } from 'react-leaflet';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { MapContainer, TileLayer, GeoJSON, Marker, Popup, useMapEvents, useMap, LayersControl, Tooltip, Pane } from 'react-leaflet';
 import L from 'leaflet';
 import { v4 as uuidv4 } from 'uuid';
 import { Search, MapPin } from 'lucide-react';
@@ -327,6 +327,10 @@ export default function LeafletMap({
   const [currentZoom, setCurrentZoom] = useState(15);
 
   const selectedPolygon = polygons.find((p) => p.internalId === selectedPolygonId);
+  const visibleWorkPolygons = useMemo(
+    () => visiblePolygons.filter((p) => latestWorkRecords.has(p.internalId)),
+    [latestWorkRecords, visiblePolygons],
+  );
 
   return (
     <div className="relative w-full h-full">
@@ -501,7 +505,8 @@ export default function LeafletMap({
         ))}
 
         {/* 各圃場の最新作業履歴アイコンを重心に表示 */}
-        {visiblePolygons.map((p: FieldPolygon) => {
+        <Pane name="work-history-icons" style={{ zIndex: 720 }}>
+        {visibleWorkPolygons.map((p: FieldPolygon) => {
           // フィルタリングが有効かつ該当しない圃場なら表示しない
           if (filteredPolygonIds !== null && !filteredPolygonIds.includes(p.internalId)) {
             return null;
@@ -587,6 +592,8 @@ export default function LeafletMap({
         })}
 
         {/* GPS現在地マーカー */}
+        </Pane>
+
         {gpsPosition && (
           <Marker position={[gpsPosition.lat, gpsPosition.lng]} icon={L.divIcon({
             className: 'gps-marker',
