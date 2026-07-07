@@ -37,6 +37,7 @@ export default function Sidebar({
   filteredPolygonIds = null as string[] | null,
   onWorkRecordChanged,
   onMergeSuccess,
+  canEditPolygon,
 }: any) {
   const [localActiveTab, setLocalActiveTab] = useState<'list' | 'edit' | 'points' | 'map'>('list');
 
@@ -122,6 +123,9 @@ export default function Sidebar({
 
   const selectedPolygon = polygons.find((p: any) => p.internalId === selectedPolygonId);
   const relatedPoints = points.filter((p: any) => p.fieldInternalId === selectedPolygonId);
+  const canEditSelectedPolygon = selectedPolygon
+    ? (canEditPolygon ? canEditPolygon(selectedPolygon) : canEdit)
+    : canEdit;
 
 
 
@@ -208,7 +212,7 @@ export default function Sidebar({
 
   // 圃場名の自動生成（生産者名_面積_地域名）
   const autoGenerateName = () => {
-    if (isGuestMode) return;
+    if (isGuestMode || !canEditSelectedPolygon) return;
     if (!selectedPolygon || !selectedPolygon.producerName) {
       toast.error('先に「生産者名」を入力してください。');
       return;
@@ -240,7 +244,7 @@ export default function Sidebar({
 
   // GPS現在地からのピン追加
   const addPointAtGps = () => {
-    if (isGuestMode) return;
+    if (isGuestMode || !canEditSelectedPolygon) return;
     if (!gpsPosition) {
       toast.error('GPS情報を取得できていません。ブラウザの位置情報許可を確認してください。');
       return;
@@ -295,6 +299,12 @@ export default function Sidebar({
       p.internalId.includes('-group-');
 
     const selectedPolys = polygons.filter((p: any) => selectedPolygonIds.includes(p.internalId));
+    const hasUneditable = selectedPolys.some((p: any) => canEditPolygon && !canEditPolygon(p));
+    if (hasUneditable) {
+      setMergeError('編集権限がない圃場は統合できません。\n自分の組織の登録済み圃場のみを選択してください。');
+      return;
+    }
+
     const hasUnregistered = selectedPolys.some((p: any) => checkUnsaved(p));
     if (hasUnregistered) {
       setMergeError('未登録の筆ポリゴンと登録済み圃場を混在した統合はできません。\n登録済み圃場のみを選択してください。');
@@ -317,7 +327,7 @@ export default function Sidebar({
 
   // 圃場グループ化処理
   const handleGroupPolygons = async () => {
-    if (isGuestMode) return;
+    if (isGuestMode || !canEdit) return;
     if (selectedPolygonIds.length < 2) {
       toast.error('グループ化には、2つ以上の筆ポリゴンを選択してください。');
       return;
@@ -391,7 +401,7 @@ export default function Sidebar({
 
   // フィールドをクリア（DBから削除して未着手の状態に戻す）
   const handleClearField = async () => {
-    if (!selectedPolygon || isGuestMode || !dbService) return;
+    if (!selectedPolygon || isGuestMode || !dbService || !canEditSelectedPolygon) return;
 
     const label = selectedPolygon.fieldName || selectedPolygon.producerName || '選択中の圃場';
     const hasPoints = relatedPoints.length > 0;
@@ -471,7 +481,7 @@ export default function Sidebar({
 
 
   const handleSaveField = async () => {
-    if (!dbService || isGuestMode || !selectedPolygon) return;
+    if (!dbService || isGuestMode || !selectedPolygon || !canEditSelectedPolygon) return;
     setIsSaving(true);
     try {
       const fieldData = {
@@ -640,7 +650,7 @@ export default function Sidebar({
                 {canEdit && selectedPolygonIds.length >= 2 &&
                   selectedPolygonIds.every((id: string) => {
                     const p = polygons.find((pl: any) => pl.internalId === id);
-                    return p && p.internalId && !p.internalId.startsWith('poly-') && !p.internalId.startsWith('source-') && !p.internalId.includes('-group-');
+                    return p && p.internalId && !p.internalId.startsWith('poly-') && !p.internalId.startsWith('source-') && !p.internalId.includes('-group-') && (!canEditPolygon || canEditPolygon(p));
                   }) && (
                   <button
                     onClick={handleMergeFields}
@@ -658,7 +668,7 @@ export default function Sidebar({
                 )}
 
                 {/* 未登録ポリゴンのグループ化フォーム */}
-                {selectedPolygonIds.length >= 2 ? (
+                {canEdit && selectedPolygonIds.length >= 2 ? (
                   !showGroupForm ? (
                     <button
                       onClick={() => setShowGroupForm(true)}
@@ -856,13 +866,13 @@ export default function Sidebar({
                       type="text"
                       value={selectedPolygon[key] || ''}
                       placeholder={placeholder}
-                      readOnly={!canEdit}
+                      readOnly={!canEditSelectedPolygon}
                       list={key === 'producerName' ? 'producers-list' : undefined}
-                      onChange={(e) => canEdit && setPolygons((prev: any) => prev.map((poly: any) => poly.internalId === selectedPolygonId ? { ...poly, [key]: e.target.value } : poly))}
-                      className={`w-full border p-2.5 text-sm rounded-xl outline-none focus:border-indigo-500 ${!canEdit ? 'bg-slate-100 text-slate-600 border-slate-200' : 'bg-slate-50/30'}`}
+                      onChange={(e) => canEditSelectedPolygon && setPolygons((prev: any) => prev.map((poly: any) => poly.internalId === selectedPolygonId ? { ...poly, [key]: e.target.value } : poly))}
+                      className={`w-full border p-2.5 text-sm rounded-xl outline-none focus:border-indigo-500 ${!canEditSelectedPolygon ? 'bg-slate-100 text-slate-600 border-slate-200' : 'bg-slate-50/30'}`}
                     />
 
-                    {key === 'fieldName' && canEdit && (
+                    {key === 'fieldName' && canEditSelectedPolygon && (
                       <button onClick={autoGenerateName} className="px-3.5 py-1 bg-slate-100 hover:bg-slate-200 border text-xs font-bold rounded-xl whitespace-nowrap transition shadow-sm">
                         自動入力
                       </button>
@@ -873,7 +883,7 @@ export default function Sidebar({
             })}
 
             {/* 明示的な保存ボタン + クリアボタン */}
-            {canEdit && (
+            {canEditSelectedPolygon && (
               <div className="flex flex-col gap-2 mt-4">
                 <button
                   onClick={handleSaveField}
@@ -927,7 +937,7 @@ export default function Sidebar({
               fieldId={selectedPolygonId}
               fieldName={selectedPolygon?.fieldName || selectedPolygon?.producerName || ''}
               workTypes={workTypes}
-              isReadOnly={!canEdit}
+              isReadOnly={!canEditSelectedPolygon}
               dbService={dbService}
               onRecordChanged={onWorkRecordChanged}
             />
@@ -948,7 +958,7 @@ export default function Sidebar({
             )}
 
             {/* 地図クリック追加 (canEditでない場合は非表示) */}
-            {canEdit && (
+            {canEditSelectedPolygon && (
               <>
                 <button
                   onClick={() => {
@@ -991,7 +1001,7 @@ export default function Sidebar({
                 relatedPoints.map((pt: any) => (
                   <div key={pt.id} className="p-3 bg-slate-50 border border-slate-100 rounded-xl mb-2 hover:shadow-sm transition">
                     <div className="flex justify-between items-center mb-1">
-                      {!canEdit ? (
+                      {!canEditSelectedPolygon ? (
                         <span className="text-xs font-bold text-indigo-700 bg-white border border-slate-100 rounded px-2 py-0.5">{pt.pointType}</span>
                       ) : (
                         <select
@@ -1007,7 +1017,7 @@ export default function Sidebar({
                           <option value="その他">その他</option>
                         </select>
                       )}
-                      {canEdit && (
+                      {canEditSelectedPolygon && (
                         <button onClick={() => setPoints((prev: any) => prev.filter((p: any) => p.id !== pt.id))} className="text-xs text-rose-500 hover:underline font-semibold">削除</button>
                       )}
                     </div>
@@ -1018,7 +1028,7 @@ export default function Sidebar({
                       </div>
                     )}
 
-                    {canEdit && (
+                    {canEditSelectedPolygon && (
                       <div className="mb-2">
                         <label className="cursor-pointer flex items-center justify-center w-full p-2 border-2 border-dashed border-slate-300 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-100 hover:border-slate-400 transition bg-white">
                           {uploadingImageId === pt.id ? (
@@ -1039,14 +1049,14 @@ export default function Sidebar({
                     <input
                       type="text"
                       value={pt.description || ''}
-                      readOnly={!canEdit}
-                      onChange={(e) => setPoints((prev: any) => prev.map((p: any) => p.id === pt.id ? {...p, description: e.target.value} : p))}
-                      className={`w-full text-xs mt-1.5 p-1.5 border rounded-lg bg-white outline-none focus:border-indigo-500 ${!canEdit ? 'bg-slate-100 border-none text-slate-500' : ''}`}
+                      readOnly={!canEditSelectedPolygon}
+                      onChange={(e) => canEditSelectedPolygon && setPoints((prev: any) => prev.map((p: any) => p.id === pt.id ? {...p, description: e.target.value} : p))}
+                      className={`w-full text-xs mt-1.5 p-1.5 border rounded-lg bg-white outline-none focus:border-indigo-500 ${!canEditSelectedPolygon ? 'bg-slate-100 border-none text-slate-500' : ''}`}
                       placeholder="補足説明"
                     />
 
                     {/* 個別のポイント保存ボタン */}
-                    {canEdit && (
+                    {canEditSelectedPolygon && (
                       <button
                         onClick={() => handleSavePoint(pt)}
                         className="w-full mt-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold py-1.5 rounded-lg border border-indigo-200 transition shadow-sm text-xs flex items-center justify-center"

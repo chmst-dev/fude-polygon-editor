@@ -103,34 +103,16 @@ export class SupabaseService implements FieldService {
       return [];
     }
 
-    // organization_id が null のまま保存された圃場を自動修復する。
-    // 編集画面ではRLSで閲覧できるが、閲覧URLでは組織IDフィルタに引っかからず
-    // 非表示になってしまうため、ログイン時にバックグラウンドで一括修正する。
-    if (this.userOrgId && data && data.length > 0) {
-      const nullOrgFields = data.filter((f: any) => !f.organization_id);
-      if (nullOrgFields.length > 0) {
-        const ids = nullOrgFields.map((f: any) => f.id);
-        console.log(`[自動修復] organization_id 未設定の圃場が ${ids.length} 件あります。修復します...`);
-        supabase
-          .from('fields')
-          .update({ organization_id: this.userOrgId })
-          .in('id', ids)
-          .then(({ error: e }) => {
-            if (e) console.error('[自動修復] organization_id 修復エラー:', e);
-            else console.log(`[自動修復完了] ${ids.length} 件の圃場に organization_id を設定しました。`);
-          });
-        // ローカルデータにも即時反映（次回閲覧URLアクセス前でも正しく表示させる）
-        data.forEach((f: any) => {
-          if (!f.organization_id) f.organization_id = this.userOrgId;
-        });
-      }
-    }
+    // organization_id が不明な圃場は、共同閲覧では画面ロード時に自動修復しない。
+    // 所有者が分からないデータを現在ユーザーの組織へ寄せると、他組織の圃場を
+    // 誤って移管する可能性があるため、必要な場合は管理者が明示的に補正する。
 
     // 名称未設定かつ情報が一切ない不要な登録済み圃場（ゴミデータ）を自動クリーンアップする。
     // producer_name, field_name, crop_type, notes がすべて空のものを対象とする。
     let filteredData = data || [];
     if (this.userOrgId && data && data.length > 0) {
-      const emptyFields = data.filter((f: any) => 
+      const emptyFields = data.filter((f: any) =>
+        f.organization_id === this.userOrgId &&
         (!f.producer_name || f.producer_name.trim() === '') &&
         (!f.field_name || f.field_name.trim() === '') &&
         (!f.crop_type || f.crop_type.trim() === '') &&
@@ -283,13 +265,17 @@ export class SupabaseService implements FieldService {
     } else {
       // 既存更新
       const { data: oldData } = await supabase.from('fields').select('*').eq('id', fieldId).single();
+      const updateField = {
+        ...dbField,
+        organization_id: oldData?.organization_id || this.userOrgId,
+      };
       const { error } = await supabase
         .from('fields')
-        .update(dbField)
+        .update(updateField)
         .eq('id', fieldId);
       if (error) throw error;
 
-      await this.logChange(fieldId, 'update', oldData, dbField);
+      await this.logChange(fieldId, 'update', oldData, updateField);
     }
 
     return { 

@@ -84,9 +84,17 @@ function MainAppInner() {
   // 閲覧専用ゲストモードかどうか
   const isGuestMode = dbService?.isReadOnly() || isGuestByUrl;
   const orgId = user?.profile?.organization_id ?? null;
+  const userRole = user?.profile?.role ?? '';
 
   // 編集権限: ログイン済み + role が admin または org_admin
-  const canEdit = !isGuestMode && !!user && ['admin', 'org_admin'].includes(user.profile?.role ?? '');
+  const canEdit = !isGuestMode && !!user && ['admin', 'org_admin'].includes(userRole);
+  const canEditPolygon = useCallback((polygon: any) => {
+    if (!canEdit || isGuestMode) return false;
+    if (userRole === 'admin') return true;
+    if (userRole !== 'org_admin') return false;
+    if (!isRegisteredPolygon(polygon)) return true;
+    return polygon?.properties?.organizationId === orgId;
+  }, [canEdit, isGuestMode, orgId, userRole]);
 
   // 作業種別（アプリ起動時に1回取得）
   const { workTypes } = useWorkTypes(dbService);
@@ -216,6 +224,14 @@ function MainAppInner() {
       handleSetActiveTab('edit');
     }
   }, [selectedPolygonId, isGuestMode, handleSetActiveTab, isAddingPoint]);
+
+  useEffect(() => {
+    if (!isAddingPoint || !selectedPolygonId) return;
+    const selectedPolygon = polygons.find((p) => p.internalId === selectedPolygonId);
+    if (selectedPolygon && !canEditPolygon(selectedPolygon)) {
+      setIsAddingPoint(false);
+    }
+  }, [canEditPolygon, isAddingPoint, polygons, selectedPolygonId]);
 
   // ピン追加完了（またはキャンセル）時に、自動的にポイントタブに戻る
   // スマホ・PC問わず、地図上でピンを打った直後はポイント画面に留まるべき
@@ -422,6 +438,7 @@ function MainAppInner() {
     const timer = setTimeout(async () => {
       // polygons の追加・更新（isUnmapped=trueの未編集筆はスキップ）
       for (const poly of polygons) {
+        if (!canEditPolygon(poly)) continue;
         // 未着手筆（サーバーから取得したまま未編集）は保存不要
         if (poly.properties?.isUnmapped && !poly.producerName && !poly.cropType && !poly.notes) continue;
         const id = poly.internalId;
@@ -476,6 +493,8 @@ function MainAppInner() {
 
       // points の追加・更新
       for (const pt of points) {
+        const parentPolygon = polygons.find((p) => p.internalId === pt.fieldInternalId);
+        if (!canEditPolygon(parentPolygon)) continue;
         const id = pt.id;
         if (isSavingPointRef.current.has(id)) continue; // 多重実行をスキップ
 
@@ -509,7 +528,7 @@ function MainAppInner() {
       // 削除された polygons の検知
       if (prevPolygonsRef.current.length > polygons.length) {
         for (const prev of prevPolygonsRef.current) {
-          if (!polygons.some(p => p.internalId === prev.internalId) && !prev.internalId.startsWith('poly-')) {
+          if (canEditPolygon(prev) && !polygons.some(p => p.internalId === prev.internalId) && !prev.internalId.startsWith('poly-')) {
             await dbService.deleteField(prev.internalId).catch(console.error);
           }
         }
@@ -519,7 +538,8 @@ function MainAppInner() {
       // 削除された points の検知
       if (prevPointsRef.current.length > points.length) {
         for (const prev of prevPointsRef.current) {
-          if (!points.some(p => p.id === prev.id) && !prev.id.startsWith('point-')) {
+          const parentPolygon = prevPolygonsRef.current.find((p) => p.internalId === prev.fieldInternalId);
+          if (canEditPolygon(parentPolygon) && !points.some(p => p.id === prev.id) && !prev.id.startsWith('point-')) {
             await dbService.deletePoint(prev.id).catch(console.error);
           }
         }
@@ -528,7 +548,7 @@ function MainAppInner() {
     }, 1000);
 
     return () => clearTimeout(timer);
-  }, [polygons, points, dbService, selectedPolygonId]);
+  }, [polygons, points, dbService, selectedPolygonId, canEditPolygon]);
 
 
   const handleLogout = async () => {
@@ -815,6 +835,7 @@ function MainAppInner() {
             activeTabOverride={activeTab}
             setActiveTabOverride={handleSetActiveTab}
             canEdit={canEdit}
+            canEditPolygon={canEditPolygon}
             workTypes={workTypes}
             fieldFilter={fieldFilter}
             onFilterChange={setFieldFilter}
