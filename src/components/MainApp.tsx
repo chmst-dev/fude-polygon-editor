@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import * as turf from '@turf/turf';
 import Sidebar from './Sidebar';
 import MapArea from './MapArea';
@@ -8,10 +8,26 @@ import { DbServiceFactory, FieldService } from '@/lib/db';
 import { supabase } from '@/lib/supabase';
 import AuthModal from './AuthModal';
 import { ToastProvider, useToast } from './Toast';
-import { User, LogOut, Cloud, Navigation, Compass, Search, Target, MapPin, X, ChevronDown, ExternalLink, Share2 } from 'lucide-react';
+import { User, LogOut, Cloud, Navigation, Compass, Search, Target, MapPin, X, ChevronDown, ExternalLink, Share2, Eye, EyeOff } from 'lucide-react';
 import { useWorkTypes } from '@/hooks/useWorkTypes';
 import { useLatestWorkRecords } from '@/hooks/useWorkRecords';
-import type { FieldFilter } from '@/types';
+import { WORK_STATUS_STYLES } from '@/lib/workIcons';
+import type { FieldFilter, FieldWorkRecord, WorkStatus } from '@/types';
+
+const isRegisteredPolygon = (polygon: any) =>
+  !!polygon?.internalId &&
+  !polygon.internalId.startsWith('poly-') &&
+  !polygon.internalId.startsWith('source-') &&
+  !polygon.internalId.includes('-group-');
+
+const formatWorkDate = (date: string | null) => {
+  if (!date) return '日付未設定';
+  return new Date(date).toLocaleDateString('ja-JP', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+};
 
 // 内部実装コンポーネント（ToastProviderでラップするために分離）
 function MainAppInner() {
@@ -60,6 +76,7 @@ function MainAppInner() {
 
   // 検索フィルター（生産者・作業項目）— MainApp で一元管理
   const [fieldFilter, setFieldFilter] = useState<FieldFilter>({ producerName: '', workTypeId: '' });
+  const [hideUnregisteredPolygons, setHideUnregisteredPolygons] = useState(false);
 
   // URLパラメータから初期ゲスト判定を行う（DB初期化前の高速適用のため）
   const isGuestByUrl = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('share');
@@ -76,13 +93,47 @@ function MainAppInner() {
 
   // 圃場の最新作業履歴（一括取得、N+1禁止）
   const registeredPolygonIds = polygons
-    .filter((p) => p.internalId && !p.internalId.startsWith('poly-') && !p.internalId.startsWith('source-') && !p.internalId.includes('-group-'))
+    .filter(isRegisteredPolygon)
     .map((p) => p.internalId as string);
 
   const { recordMap: latestWorkRecordMap, refresh: refreshWorkRecords } = useLatestWorkRecords(
     dbService,
     registeredPolygonIds,
   );
+
+  const mapPolygons = useMemo(() => {
+    if (isGuestMode || !hideUnregisteredPolygons) return polygons;
+    return polygons.filter(isRegisteredPolygon);
+  }, [hideUnregisteredPolygons, isGuestMode, polygons]);
+
+  const mapPolygonIds = useMemo(
+    () => new Set(mapPolygons.map((p) => p.internalId)),
+    [mapPolygons],
+  );
+
+  const mapPoints = useMemo(
+    () => points.filter((point: any) => mapPolygonIds.has(point.fieldInternalId)),
+    [mapPolygonIds, points],
+  );
+
+  useEffect(() => {
+    if (isGuestMode || !hideUnregisteredPolygons) return;
+
+    if (selectedPolygonId) {
+      const selectedPolygon = polygons.find((p) => p.internalId === selectedPolygonId);
+      if (selectedPolygon && !isRegisteredPolygon(selectedPolygon)) {
+        setSelectedPolygonId(null);
+      }
+    }
+
+    setSelectedPolygonIds((prev) => {
+      const next = prev.filter((id) => {
+        const polygon = polygons.find((p) => p.internalId === id);
+        return polygon ? isRegisteredPolygon(polygon) : false;
+      });
+      return next.length === prev.length ? prev : next;
+    });
+  }, [hideUnregisteredPolygons, isGuestMode, polygons, selectedPolygonId]);
 
   // 作業項目でフィルタされた圃場IDリストの取得
   const [fieldsWithSelectedWorkType, setFieldsWithSelectedWorkType] = useState<string[]>([]);
@@ -236,6 +287,7 @@ function MainAppInner() {
   // ビューポート変更時にDBから表示範囲内の筆ポリゴンを取得してキャッシュに追加
   const onMapBoundsChange = useCallback(async (bounds: { west: number; south: number; east: number; north: number }) => {
     if (!dbService || isImportingRef.current) return;
+    if (!isGuestMode && hideUnregisteredPolygons) return;
     try {
       const newPolys = await dbService.getSourcePolygonsInBbox(
         bounds.west, bounds.south, bounds.east, bounds.north
@@ -261,7 +313,7 @@ function MainAppInner() {
     } catch (e) {
       console.error('Bbox fetch error:', e);
     }
-  }, [dbService]);
+  }, [dbService, hideUnregisteredPolygons, isGuestMode]);
 
   // 「地図で場所を確認」ボタン押下時に現在のビューポートのポリゴンを強制読み込みする関数
   // LeafletMapが地図タブ表示時に invalidateSize を値変化で知らせるためのトリガーカウンター
@@ -793,8 +845,8 @@ function MainAppInner() {
         >
           <div className={`absolute inset-0 ${isMobile ? 'pb-16' : ''}`}>
             <MapArea
-              polygons={polygons}
-              points={points}
+              polygons={mapPolygons}
+              points={mapPoints}
               selectedPolygonId={selectedPolygonId}
               setSelectedPolygonId={setSelectedPolygonId}
               isAddingPoint={isAddingPoint}
@@ -818,6 +870,20 @@ function MainAppInner() {
 
           {/* フローティングGPS現在位置コントロール */}
           <div className="absolute top-4 right-4 z-50 flex flex-col gap-2">
+            {!isGuestMode && (
+              <button
+                onClick={() => setHideUnregisteredPolygons((current) => !current)}
+                title={hideUnregisteredPolygons ? '未登録ポリゴンも地図に表示' : '未登録ポリゴンを地図で非表示'}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl border text-xs font-bold shadow-xl backdrop-blur-md transition-all active:scale-95 ${
+                  hideUnregisteredPolygons
+                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-emerald-600/20'
+                    : 'bg-white/95 text-slate-700 border-slate-200/80 hover:bg-slate-50'
+                }`}
+              >
+                {hideUnregisteredPolygons ? <EyeOff className="text-white" size={14} /> : <Eye className="text-emerald-600" size={14} />}
+                {hideUnregisteredPolygons ? '登録済みのみ' : '全ポリゴン表示'}
+              </button>
+            )}
             <button
               onClick={() => setIsTrackingGps(!isTrackingGps)}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl border text-xs font-bold shadow-xl backdrop-blur-md transition-all active:scale-95 ${
@@ -921,6 +987,35 @@ function MainAppInner() {
                     </div>
                   )}
                 </div>
+                {(() => {
+                  const record = latestWorkRecordMap.get(infoPanelPolygon.internalId) as FieldWorkRecord | undefined;
+                  if (!record) return null;
+                  const statusStyle = WORK_STATUS_STYLES[record.status as WorkStatus] || WORK_STATUS_STYLES.planned;
+
+                  return (
+                    <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="font-extrabold text-slate-700">最新作業</p>
+                        <span
+                          className="rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
+                          style={{ backgroundColor: statusStyle.badge }}
+                        >
+                          {statusStyle.label}
+                        </span>
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-slate-600">
+                        <span className="font-bold text-slate-900">{record.workTypeName}</span>
+                        <span>{formatWorkDate(record.workedOn)}</span>
+                        {record.creatorName && <span>{record.creatorName}</span>}
+                      </div>
+                      {record.notes && (
+                        <p className="mt-2 rounded-lg border border-white bg-white px-2 py-1.5 text-[11px] leading-snug text-slate-600">
+                          {record.notes}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
                 {infoPanelPolygon.notes && (
                   <div className="bg-rose-50 border border-rose-100 rounded-xl px-3 py-2 text-xs text-rose-800 font-medium">
                     ⚠️ {infoPanelPolygon.notes}
