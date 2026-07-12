@@ -38,6 +38,8 @@ export default function Sidebar({
   onWorkRecordChanged,
   onMergeSuccess,
   canEditPolygon,
+  currentUserId = null,
+  userRole = '',
 }: any) {
   const [localActiveTab, setLocalActiveTab] = useState<'list' | 'edit' | 'points' | 'map'>('list');
 
@@ -940,6 +942,8 @@ export default function Sidebar({
               isReadOnly={!canEditSelectedPolygon}
               dbService={dbService}
               onRecordChanged={onWorkRecordChanged}
+              currentUserId={currentUserId ?? null}
+              userRole={userRole ?? ''}
             />
           </div>
         )}

@@ -109,6 +109,14 @@ function MainAppInner() {
     registeredPolygonIds,
   );
 
+  // 作業種別フィルター再取得トリガー用の tick
+  const [workFilterTick, setWorkFilterTick] = useState(0);
+
+  const handleWorkRecordChanged = useCallback(() => {
+    refreshWorkRecords();
+    setWorkFilterTick((prev) => prev + 1);
+  }, [refreshWorkRecords]);
+
   const mapPolygons = useMemo(() => {
     if (isGuestMode || !hideUnregisteredPolygons) return polygons;
     return polygons.filter(isRegisteredPolygon);
@@ -151,14 +159,20 @@ function MainAppInner() {
       setFieldsWithSelectedWorkType([]);
       return;
     }
+    let active = true;
     dbService.getFieldIdsByWorkType(fieldFilter.workTypeId)
       .then((ids) => {
-        setFieldsWithSelectedWorkType(ids);
+        if (active) {
+          setFieldsWithSelectedWorkType(ids);
+        }
       })
       .catch((e) => {
         console.error('Error fetching fields by work type:', e);
       });
-  }, [dbService, fieldFilter.workTypeId]);
+    return () => {
+      active = false;
+    };
+  }, [dbService, fieldFilter.workTypeId, workFilterTick]);
 
   // フィルタリング済み圃場ID（一覧・地図・作業アイコンに同じ条件を適用）
   const filteredPolygonIds = (() => {
@@ -840,8 +854,10 @@ function MainAppInner() {
             fieldFilter={fieldFilter}
             onFilterChange={setFieldFilter}
             filteredPolygonIds={filteredPolygonIds}
-            onWorkRecordChanged={refreshWorkRecords}
+            onWorkRecordChanged={handleWorkRecordChanged}
             onMergeSuccess={handleMergeSuccess}
+            currentUserId={user?.id ?? null}
+            userRole={userRole}
           />
           {/* ドラッグ用ハンドル (PCでのみ表示) */}
           <div onMouseDown={startResizing} className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize bg-slate-200 hover:bg-indigo-400 z-50 transition-colors border-r hidden md:block" title="ドラッグで幅を調整" />

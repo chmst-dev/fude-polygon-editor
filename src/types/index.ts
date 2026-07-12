@@ -69,6 +69,15 @@ export interface NewWorkRecord {
   notes: string | null;
 }
 
+// 更新時の入力型（field_id / created_by / created_at は更新しない）
+export interface UpdateWorkRecord {
+  id: string;            // 更新対象レコードID
+  workTypeId: string;
+  status: WorkStatus;
+  workedOn: string | null;
+  notes: string | null;
+}
+
 // ============================================================
 // 検索フィルター
 // ============================================================

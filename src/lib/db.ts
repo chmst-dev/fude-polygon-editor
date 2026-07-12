@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 import * as turf from '@turf/turf';
-import type { WorkType, FieldWorkRecord, NewWorkRecord, MergeFieldsParams } from '@/types';
+import type { WorkType, FieldWorkRecord, NewWorkRecord, UpdateWorkRecord, MergeFieldsParams } from '@/types';
 
 export interface FieldService {
   isOnline(): Promise<boolean>;
@@ -21,6 +21,7 @@ export interface FieldService {
   getWorkTypes(): Promise<WorkType[]>;
   getWorkRecords(fieldIds: string[]): Promise<FieldWorkRecord[]>;
   saveWorkRecord(record: NewWorkRecord): Promise<FieldWorkRecord>;
+  updateWorkRecord(record: UpdateWorkRecord): Promise<FieldWorkRecord>;
   deleteWorkRecord(id: string): Promise<void>;
   getFieldIdsByWorkType(workTypeId: string): Promise<string[]>;
   // 登録済み圃場統合（DBトランザクション）
@@ -704,12 +705,64 @@ export class SupabaseService implements FieldService {
     };
   }
 
+  async updateWorkRecord(record: UpdateWorkRecord): Promise<FieldWorkRecord> {
+    await this.isOnline();
+    if (!this.userId) throw new Error('ログインが必要です。');
+
+    // field_id / created_by / created_at は更新しない。
+    // work_type_id / status / worked_on / notes のみ UPDATE する。
+    // クエリ自体に .select().single() を付与して実際に1行更新されたことを担保する。
+    // 更新件数が0件（RLS拒否など）の場合は single() がエラーを発生させるため、安全に例外が発生する。
+    const { data, error } = await supabase
+      .from('field_work_records')
+      .update({
+        work_type_id: record.workTypeId,
+        status: record.status,
+        worked_on: record.workedOn || null,
+        notes: record.notes || null,
+      })
+      .eq('id', record.id)
+      .select(`
+        id, field_id, work_type_id, status, worked_on, notes,
+        created_by, created_at, updated_at,
+        work_types!inner(code, name, icon_key, color)
+      `)
+      .single();
+
+    if (error) throw error;
+
+    return {
+      id: data.id,
+      fieldId: data.field_id,
+      workTypeId: data.work_type_id,
+      workTypeCode: (data.work_types as any).code,
+      workTypeName: (data.work_types as any).name,
+      workTypeIconKey: (data.work_types as any).icon_key,
+      workTypeColor: (data.work_types as any).color,
+      status: data.status,
+      workedOn: data.worked_on ?? null,
+      notes: data.notes ?? null,
+      createdBy: data.created_by ?? null,
+      // creatorName は呼び出し元の refresh() で authoritative 再取得により復元される。
+      creatorName: null,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
   async deleteWorkRecord(id: string): Promise<void> {
     await this.isOnline();
+    if (!this.userId) throw new Error('ログインが必要です。');
+
+    // DELETE クエリ自身に .select('id').single() を付けて、実際に削除された行があることを担保する。
+    // RLSや存在しないIDなどで0件の場合、single() がエラーを発生させ、安全に例外が発生する。
     const { error } = await supabase
       .from('field_work_records')
       .delete()
-      .eq('id', id);
+      .eq('id', id)
+      .select('id')
+      .single();
+
     if (error) throw error;
   }
 
@@ -928,6 +981,10 @@ export class GuestService extends SupabaseService {
 
   async saveWorkRecord(_record: NewWorkRecord): Promise<FieldWorkRecord> {
     throw new Error('閲覧専用モードのため、作業登録はできません。');
+  }
+
+  async updateWorkRecord(_record: UpdateWorkRecord): Promise<FieldWorkRecord> {
+    throw new Error('閲覧専用モードのため、作業更新はできません。');
   }
 
   async deleteWorkRecord(_id: string): Promise<void> {
