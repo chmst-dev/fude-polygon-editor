@@ -19,46 +19,40 @@ export function useLatestWorkRecords(
 } {
   const [recordMap, setRecordMap] = useState<Map<string, FieldWorkRecord>>(new Map());
   const [loading, setLoading] = useState(false);
-  const prevFieldIdsRef = useRef<string>('');
-  const lastRefreshTickRef = useRef(0);
   const [refreshTick, setRefreshTick] = useState(0);
 
   const refresh = useCallback(() => {
     setRefreshTick((t) => t + 1);
   }, []);
 
-  useEffect(() => {
-    if (!dbService || fieldIds.length === 0) {
-      Promise.resolve().then(() => {
-        setRecordMap((prev) => prev.size === 0 ? prev : new Map());
-      });
-      return;
-    }
-
-    // 登録済み圃場（UUIDのみ）にフィルタ
-    const registeredIds = fieldIds.filter(
+  // 登録済み圃場（UUIDのみ）から安定したキー文字列を導出する。
+  // 配列の identity ではなく内容で比較することで、親の再レンダーごとに
+  // エフェクトが再実行されて取得中のフェッチが破棄されるのを防ぐ。
+  const registeredKey = fieldIds
+    .filter(
       (id) =>
         id &&
         !id.startsWith('poly-') &&
         !id.startsWith('source-') &&
         !id.includes('-group-'),
-    );
-    if (registeredIds.length === 0) {
+    )
+    .sort()
+    .join(',');
+
+  useEffect(() => {
+    if (!dbService || registeredKey === '') {
       Promise.resolve().then(() => {
         setRecordMap((prev) => prev.size === 0 ? prev : new Map());
       });
       return;
     }
 
-    const isRefreshTrigger = refreshTick !== lastRefreshTickRef.current;
-    lastRefreshTickRef.current = refreshTick;
-
-    const key = registeredIds.slice().sort().join(',');
-    if (key === prevFieldIdsRef.current && !isRefreshTrigger) return;
-    prevFieldIdsRef.current = key;
+    const registeredIds = registeredKey.split(',');
 
     let cancelled = false;
-    setLoading((prev) => prev ? prev : true);
+    Promise.resolve().then(() => {
+      if (!cancelled) setLoading((prev) => (prev ? prev : true));
+    });
 
     dbService
       .getWorkRecords(registeredIds)
@@ -78,7 +72,7 @@ export function useLatestWorkRecords(
     return () => {
       cancelled = true;
     };
-  }, [dbService, fieldIds, refreshTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dbService, registeredKey, refreshTick]);
 
   return { recordMap, loading, refresh };
 }
