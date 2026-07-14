@@ -58,7 +58,14 @@ export default function FieldFilterBar({
         <select
           id="filter-work-type"
           value={filter.workTypeId}
-          onChange={(e) => onChange({ ...filter, workTypeId: e.target.value })}
+          onChange={(e) => {
+            const nextWorkTypeId = e.target.value;
+            onChange({
+              ...filter,
+              workTypeId: nextWorkTypeId,
+              showUndone: nextWorkTypeId ? filter.showUndone : false,
+            });
+          }}
           className="flex-1 py-2 px-2.5 border rounded-lg text-xs outline-none focus:border-indigo-400 bg-white shadow-sm"
         >
           <option value="">作業項目で絞り込み...</option>
@@ -71,7 +78,7 @@ export default function FieldFilterBar({
 
         {hasFilter && (
           <button
-            onClick={() => onChange({ producerName: '', workTypeId: '' })}
+            onClick={() => onChange({ producerName: '', workTypeId: '', showUndone: false })}
             className="flex items-center gap-1 px-2.5 py-2 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 transition whitespace-nowrap shadow-sm"
             title="フィルターをすべてクリア"
           >
@@ -80,6 +87,21 @@ export default function FieldFilterBar({
           </button>
         )}
       </div>
+
+      {filter.workTypeId && (
+        <div className="flex items-center gap-2 pl-1.5 py-1">
+          <label htmlFor="filter-show-undone" className="flex items-center gap-2 cursor-pointer text-xs text-slate-600 select-none">
+            <input
+              type="checkbox"
+              id="filter-show-undone"
+              checked={filter.showUndone || false}
+              onChange={(e) => onChange({ ...filter, showUndone: e.target.checked })}
+              className="w-3.5 h-3.5 border rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+            />
+            未実施の圃場も表示
+          </label>
+        </div>
+      )}
 
       {/* フィルター中バッジ */}
       {hasFilter && (
@@ -102,7 +124,7 @@ export default function FieldFilterBar({
               <span className="flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full px-2 py-0.5 text-[10px] font-bold">
                 作業: {wt.name}
                 <button
-                  onClick={() => onChange({ ...filter, workTypeId: '' })}
+                  onClick={() => onChange({ ...filter, workTypeId: '', showUndone: false })}
                   className="ml-0.5 hover:text-emerald-900"
                   aria-label="作業フィルターを削除"
                 >

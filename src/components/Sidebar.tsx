@@ -40,6 +40,8 @@ export default function Sidebar({
   canEditPolygon,
   currentUserId = null,
   userRole = '',
+  doneFieldIds = [] as string[],
+  showUndone = false,
 }: any) {
   const [localActiveTab, setLocalActiveTab] = useState<'list' | 'edit' | 'points' | 'map'>('list');
 
@@ -764,6 +766,13 @@ export default function Sidebar({
                          selectedPolygonIds.includes(p.internalId) ? <CheckSquare size={14} className="text-amber-600 shrink-0" /> : <Square size={14} className="text-slate-400 shrink-0" />
                        )}
                        <span className="truncate">{p.fieldName || (p.producerName ? `${p.producerName} (名称未設定)` : '名称未設定')}</span>
+                       {showUndone && (
+                         doneFieldIds.includes(p.internalId) ? (
+                           <span className="shrink-0 text-[10px] font-bold text-green-700 bg-green-100 border border-green-300 px-1.5 py-0.5 rounded ml-1.5 whitespace-nowrap">実施済み</span>
+                         ) : (
+                           <span className="shrink-0 text-[10px] font-bold text-red-700 bg-red-100 border border-red-300 px-1.5 py-0.5 rounded ml-1.5 whitespace-nowrap">未実施</span>
+                         )
+                       )}
                        {isUnsaved(p) && (
                          <span className="shrink-0 text-[10px] font-bold text-amber-700 bg-amber-100 border border-amber-300 px-1 py-0.5 rounded">未保存</span>
                        )}

@@ -38,6 +38,20 @@ function getPolygonsHash(polygons: any[]): number {
   return hash;
 }
 
+// 実施済み圃場ID一覧の状態変化を検知するためのハッシュ関数
+function getIdsHash(ids: string[]): number {
+  let hash = 0;
+  const sortedIds = [...ids].sort();
+  for (let i = 0; i < sortedIds.length; i++) {
+    const str = sortedIds[i];
+    for (let j = 0; j < str.length; j++) {
+      hash = (hash << 5) - hash + str.charCodeAt(j);
+      hash |= 0;
+    }
+  }
+  return hash;
+}
+
 const createCustomIcon = (type: string, color: string = '#3b82f6') => L.divIcon({
   className: 'custom-div-icon',
   html: `<div class="marker-pin shadow-md" style="background-color: ${color}; width: 24px; height: 24px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); display: flex; align-items: center; justify-content: center; border: 2px solid white;"><div style="transform: rotate(45deg); font-weight: bold; font-size: 10px; color: white;">${type.charAt(0)}</div></div>`,
@@ -299,6 +313,8 @@ interface LeafletMapProps {
   setActiveTab?: (tab: 'list' | 'edit' | 'points' | 'map') => void;
   latestWorkRecords?: Map<string, FieldWorkRecord>;
   filteredPolygonIds?: string[] | null;
+  doneFieldIds?: string[];
+  showUndone?: boolean;
 }
 
 export default function LeafletMap({
@@ -321,6 +337,8 @@ export default function LeafletMap({
   setActiveTab,
   latestWorkRecords = new Map(),
   filteredPolygonIds = null,
+  doneFieldIds = [],
+  showUndone = false,
 }: LeafletMapProps) {
   // ビューポート内に絞り込まれたポリゴン
   const [visiblePolygons, setVisiblePolygons] = useState<FieldPolygon[]>([]);
@@ -383,7 +401,7 @@ export default function LeafletMap({
         {/* 絞り込まれたポリゴンのみ描画 */}
         {visiblePolygons.length > 0 && (
           <GeoJSON
-            key={`map-layer-${visiblePolygons.length}-${selectedPolygonIds.length}-${isMultiSelectMode}-${selectedPolygonId}-${getPolygonsHash(visiblePolygons)}`}
+            key={`map-layer-${visiblePolygons.length}-${selectedPolygonIds.length}-${isMultiSelectMode}-${selectedPolygonId}-${getPolygonsHash(visiblePolygons)}-${showUndone}-${getIdsHash(doneFieldIds)}`}
             data={{
               type: "FeatureCollection",
               features: visiblePolygons.map((p: FieldPolygon) => ({
@@ -404,6 +422,15 @@ export default function LeafletMap({
               if (properties.properties?.isUnmapped) {
                 baseColor = '#ea580c'; // 未着手: 屋外でもはっきり見える濃いオレンジ
                 borderColor = '#431407'; // 非常に濃い茶褐色で境界線を強調
+              } else if (showUndone) {
+                const isDone = doneFieldIds?.includes(properties.internalId);
+                if (isDone) {
+                  baseColor = '#16a34a'; // 実施済み: 緑
+                  borderColor = '#14532d';
+                } else {
+                  baseColor = '#dc2626'; // 未実施: 赤
+                  borderColor = '#7f1d1d';
+                }
               } else if (properties.producerName) {
                 // 彩度(S)を85%、輝度(L)を42%に設定し、屋外でも映える強めの鮮やかな色味に
                 baseColor = stringToHslColor(properties.producerName, 85, 42);
@@ -627,29 +654,47 @@ export default function LeafletMap({
         </div>
       )}
 
-      {/* 作業状況の凡例 */}
-      <div className="absolute bottom-4 left-4 z-[1000] bg-white/90 backdrop-blur-md border border-slate-200 shadow-xl px-4 py-3 rounded-2xl space-y-1.5 select-none text-[11px]">
-        <p className="font-extrabold text-slate-600 uppercase tracking-wider text-[10px] border-b pb-1 mb-1.5">
-          作業状況 凡例
-        </p>
-        <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-          {Object.entries(WORK_STATUS_STYLES).map(([status, style]) => (
-            <div key={status} className="flex items-center gap-1.5">
-              <span
-                className="w-3 h-3 rounded-full border shadow-sm shrink-0"
-                style={{
-                  backgroundColor: style.bg,
-                  borderColor: style.border,
-                  borderWidth: 2,
-                }}
-              />
-              <span className="font-bold text-slate-700">
-                {style.label}
-              </span>
+      {/* 作業状況の凡例 または 同時表示モードの凡例 */}
+      {showUndone ? (
+        <div className="absolute bottom-4 left-4 z-[1000] bg-white/90 backdrop-blur-md border border-slate-200 shadow-xl px-4 py-3 rounded-2xl space-y-1.5 select-none text-[11px]">
+          <p className="font-extrabold text-slate-600 uppercase tracking-wider text-[10px] border-b pb-1 mb-1.5">
+            同時表示モード 凡例
+          </p>
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded border shadow-sm shrink-0" style={{ backgroundColor: '#16a34a', borderColor: '#14532d', borderWidth: 2 }} />
+              <span className="font-bold text-slate-700">実施済み</span>
             </div>
-          ))}
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded border shadow-sm shrink-0" style={{ backgroundColor: '#dc2626', borderColor: '#7f1d1d', borderWidth: 2 }} />
+              <span className="font-bold text-slate-700">未実施</span>
+            </div>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="absolute bottom-4 left-4 z-[1000] bg-white/90 backdrop-blur-md border border-slate-200 shadow-xl px-4 py-3 rounded-2xl space-y-1.5 select-none text-[11px]">
+          <p className="font-extrabold text-slate-600 uppercase tracking-wider text-[10px] border-b pb-1 mb-1.5">
+            作業状況 凡例
+          </p>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+            {Object.entries(WORK_STATUS_STYLES).map(([status, style]) => (
+              <div key={status} className="flex items-center gap-1.5">
+                <span
+                  className="w-3 h-3 rounded-full border shadow-sm shrink-0"
+                  style={{
+                    backgroundColor: style.bg,
+                    borderColor: style.border,
+                    borderWidth: 2,
+                  }}
+                />
+                <span className="font-bold text-slate-700">
+                  {style.label}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -75,7 +75,7 @@ function MainAppInner() {
   const [user, setUser] = useState<any>(null);
 
   // 検索フィルター（生産者・作業項目）— MainApp で一元管理
-  const [fieldFilter, setFieldFilter] = useState<FieldFilter>({ producerName: '', workTypeId: '' });
+  const [fieldFilter, setFieldFilter] = useState<FieldFilter>({ producerName: '', workTypeId: '', showUndone: false });
   const [hideUnregisteredPolygons, setHideUnregisteredPolygons] = useState(false);
 
   // URLパラメータから初期ゲスト判定を行う（DB初期化前の高速適用のため）
@@ -186,9 +186,16 @@ function MainAppInner() {
         if (hasProducerFilter) {
           if (!p.producerName?.includes(fieldFilter.producerName.trim())) return false;
         }
-        // 作業項目フィルター（過去履歴に合致する作業項目が1件以上存在するか）
+        // 作業項目フィルター
         if (hasWorkTypeFilter) {
-          if (!fieldsWithSelectedWorkType.includes(p.internalId)) return false;
+          const isDone = fieldsWithSelectedWorkType.includes(p.internalId);
+          if (fieldFilter.workTypeId !== '' && fieldFilter.showUndone) {
+            // 同時表示モード: 登録済み圃場のみが対象。未着手筆ポリゴン (isRegisteredPolygon) は除外
+            if (!isRegisteredPolygon(p)) return false;
+          } else {
+            // 通常モード: 実施済みのみ表示
+            if (!isDone) return false;
+          }
         }
         return true;
       })
@@ -858,6 +865,8 @@ function MainAppInner() {
             onMergeSuccess={handleMergeSuccess}
             currentUserId={user?.id ?? null}
             userRole={userRole}
+            doneFieldIds={fieldsWithSelectedWorkType}
+            showUndone={fieldFilter.workTypeId !== '' && fieldFilter.showUndone}
           />
           {/* ドラッグ用ハンドル (PCでのみ表示) */}
           <div onMouseDown={startResizing} className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize bg-slate-200 hover:bg-indigo-400 z-50 transition-colors border-r hidden md:block" title="ドラッグで幅を調整" />
@@ -902,6 +911,8 @@ function MainAppInner() {
               workTypes={workTypes}
               latestWorkRecords={latestWorkRecordMap}
               filteredPolygonIds={filteredPolygonIds}
+              doneFieldIds={fieldsWithSelectedWorkType}
+              showUndone={fieldFilter.workTypeId !== '' && fieldFilter.showUndone}
             />
           </div>
 

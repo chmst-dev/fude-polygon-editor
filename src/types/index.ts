@@ -85,6 +85,7 @@ export interface UpdateWorkRecord {
 export interface FieldFilter {
   producerName: string;
   workTypeId: string;
+  showUndone: boolean;
 }
 
 // ============================================================
