@@ -8,7 +8,7 @@ import { DbServiceFactory, FieldService } from '@/lib/db';
 import { supabase } from '@/lib/supabase';
 import AuthModal from './AuthModal';
 import { ToastProvider, useToast } from './Toast';
-import { User, LogOut, Cloud, Navigation, Compass, Search, Target, MapPin, X, ChevronDown, ExternalLink, Share2, Eye, EyeOff } from 'lucide-react';
+import { User, LogOut, Cloud, Navigation, Compass, Search, Target, MapPin, X, ChevronDown, ExternalLink, Share2, Eye, EyeOff, RefreshCw } from 'lucide-react';
 import { useWorkTypes } from '@/hooks/useWorkTypes';
 import { useLatestWorkRecords } from '@/hooks/useWorkRecords';
 import { WORK_STATUS_STYLES } from '@/lib/workIcons';
@@ -77,6 +77,7 @@ function MainAppInner() {
   // 検索フィルター（生産者・作業項目）— MainApp で一元管理
   const [fieldFilter, setFieldFilter] = useState<FieldFilter>({ producerName: '', workTypeId: '', showUndone: false });
   const [hideUnregisteredPolygons, setHideUnregisteredPolygons] = useState(false);
+  const [profileFetchError, setProfileFetchError] = useState(false);
 
   // URLパラメータから初期ゲスト判定を行う（DB初期化前の高速適用のため）
   const isGuestByUrl = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('share');
@@ -382,21 +383,54 @@ function MainAppInner() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles')
-          .select('*, organizations(name)')
-          .eq('id', session.user.id)
-          .single();
+        let profile = null;
+        let profileError = null;
+
+        // 最大3回（初回+2回リトライ）取得を試みる
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const { data, error } = await supabase
+              .from('profiles')
+              .select('*, organizations(name)')
+              .eq('id', session.user.id)
+              .single();
+            if (error) {
+              profileError = error;
+              // PGRST116 (プロフィール行が存在しない) の場合はリトライしても解決しないため、即時終了する
+              if (error.code === 'PGRST116') {
+                console.info('[initDb] プロフィール行が存在しません (PGRST116)。リトライをスキップします。');
+                break;
+              }
+            } else {
+              profile = data;
+              profileError = null;
+              break; // 成功したためループを抜ける
+            }
+          } catch (err) {
+            profileError = err;
+          }
+
+          if (attempt < 3) {
+            console.warn(`[initDb] プロフィール取得失敗（${attempt}回目）。1秒後にリトライします...`, profileError);
+            await new Promise((resolve) => setTimeout(resolve, 1000)); // 1秒待機
+          }
+        }
+
         if (profileError) {
-          console.warn('[initDb] プロフィール取得エラー（続行します）:', profileError);
+          console.error('[initDb] プロフィール取得に最終的に失敗しました:', profileError);
+          setProfileFetchError(true);
+        } else {
+          setProfileFetchError(false);
         }
         setUser({ ...session.user, profile: profile ?? null });
       } else {
         setUser(null);
+        setProfileFetchError(false);
       }
     } catch (e) {
       console.warn('[initDb] 認証情報の取得に失敗しました（続行します）:', e);
       setUser(null);
+      setProfileFetchError(false);
     }
 
     // STEP 3: 圃場データとポイントデータの取得（失敗しても空配列で続行する）
@@ -810,6 +844,21 @@ function MainAppInner() {
           )}
         </div>
       </header>
+      {profileFetchError && (
+        <div className="bg-red-50 border-b border-red-200 px-4 py-2.5 flex items-center justify-between text-xs font-bold text-red-800 z-[999] shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="flex h-2 w-2 rounded-full bg-red-600 animate-ping shrink-0" />
+            <span>アカウント情報を取得できませんでした。再読み込みしてください。</span>
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            className="flex items-center gap-1.5 px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg shadow transition font-bold cursor-pointer"
+          >
+            <RefreshCw size={11} className="shrink-0" />
+            <span>再読み込み</span>
+          </button>
+        </div>
+      )}
 
       {/* メインビューエリア（スマホ時は縦レイアウト、PC時は横並び） */}
       <div className="flex flex-1 overflow-hidden relative flex-col md:flex-row">
