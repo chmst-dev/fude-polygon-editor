@@ -62,7 +62,7 @@ export default function FieldFilterBar({
           className="flex-1 py-2 px-2.5 border rounded-lg text-xs outline-none focus:border-indigo-400 bg-white shadow-sm"
         >
           <option value="">作業項目で絞り込み...</option>
-          {workTypes.map((wt) => (
+          {workTypes.filter((wt) => wt.isActive).map((wt) => (
             <option key={wt.id} value={wt.id}>
               {wt.name}
             </option>

@@ -300,7 +300,7 @@ export default function WorkHistory({
               className="w-full border p-2 rounded-lg bg-white outline-none focus:border-indigo-500 text-xs"
             >
               <option value="">選択してください</option>
-              {workTypes.map((wt) => (
+              {workTypes.filter((wt) => wt.isActive).map((wt) => (
                 <option key={wt.id} value={wt.id}>
                   {wt.name}
                 </option>
