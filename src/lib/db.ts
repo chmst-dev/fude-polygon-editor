@@ -77,31 +77,51 @@ export class SupabaseService implements FieldService {
     await this.isOnline();
     if (!this.userId) return [];
 
-    // 1. 紐付け済みの fields を取得
-    const { data, error } = await supabase
-      .from('fields')
-      .select(`
-        id,
-        organization_id,
-        producer_name,
-        field_name,
-        crop_type,
-        notes,
-        status,
-        field_source_polygons (
-          source_polygon_id,
-          source_polygons (
-            id,
-            geom,
-            area_sqm,
-            original_properties
-          )
-        )
-      `);
+    // 1. 紐付け済みの fields を取得 (PostgRESTの1000行制限対策としてページングで全件取得)
+    const PAGE_SIZE = 1000;
+    let allData: any[] = [];
+    let from = 0;
+    let hasMore = true;
 
-    if (error) {
-      console.error('Error fetching fields from Supabase:', error);
-      return [];
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from('fields')
+        .select(`
+          id,
+          organization_id,
+          producer_name,
+          field_name,
+          crop_type,
+          notes,
+          status,
+          field_source_polygons (
+            source_polygon_id,
+            source_polygons (
+              id,
+              geom,
+              area_sqm,
+              original_properties
+            )
+          )
+        `)
+        .order('id')
+        .range(from, from + PAGE_SIZE - 1);
+
+      if (error) {
+        console.error('Error fetching fields from Supabase:', error);
+        return [];
+      }
+
+      if (data && data.length > 0) {
+        allData = [...allData, ...data];
+        if (data.length < PAGE_SIZE) {
+          hasMore = false;
+        } else {
+          from += PAGE_SIZE;
+        }
+      } else {
+        hasMore = false;
+      }
     }
 
     // organization_id が不明な圃場は、共同閲覧では画面ロード時に自動修復しない。
@@ -110,9 +130,9 @@ export class SupabaseService implements FieldService {
 
     // 名称未設定かつ情報が一切ない不要な登録済み圃場（ゴミデータ）を自動クリーンアップする。
     // producer_name, field_name, crop_type, notes がすべて空のものを対象とする。
-    let filteredData = data || [];
-    if (this.userOrgId && data && data.length > 0) {
-      const emptyFields = data.filter((f: any) =>
+    let filteredData = allData;
+    if (this.userOrgId && allData && allData.length > 0) {
+      const emptyFields = allData.filter((f: any) =>
         f.organization_id === this.userOrgId &&
         (!f.producer_name || f.producer_name.trim() === '') &&
         (!f.field_name || f.field_name.trim() === '') &&
@@ -135,7 +155,7 @@ export class SupabaseService implements FieldService {
           });
 
         // 今回返すデータから、削除対象のレコードを除外する
-        filteredData = data.filter((f: any) => !idsToDelete.includes(f.id));
+        filteredData = allData.filter((f: any) => !idsToDelete.includes(f.id));
       }
     }
 
@@ -305,18 +325,39 @@ export class SupabaseService implements FieldService {
     await this.isOnline();
     if (!this.userId) return [];
 
-    const { data, error } = await supabase
-      .from('field_points')
-      .select('*');
+    // PostgRESTの1000行制限対策としてページングで全件取得
+    const PAGE_SIZE = 1000;
+    let allData: any[] = [];
+    let from = 0;
+    let hasMore = true;
 
-    console.log('[DEBUG] Fetched points data:', data);
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from('field_points')
+        .select('*')
+        .order('id')
+        .range(from, from + PAGE_SIZE - 1);
 
-    if (error) {
-      console.error('Error fetching points from Supabase:', error);
-      return [];
+      if (error) {
+        console.error('Error fetching points from Supabase:', error);
+        return [];
+      }
+
+      if (data && data.length > 0) {
+        allData = [...allData, ...data];
+        if (data.length < PAGE_SIZE) {
+          hasMore = false;
+        } else {
+          from += PAGE_SIZE;
+        }
+      } else {
+        hasMore = false;
+      }
     }
 
-    return this.transformPoints(data);
+    console.log('[DEBUG] Fetched points data:', allData);
+
+    return this.transformPoints(allData);
   }
 
   protected transformPoints(data: any[]) {
