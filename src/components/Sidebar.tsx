@@ -204,6 +204,7 @@ export default function Sidebar({
 
   const editedPolygons = polygons.filter(isEdited).filter(matchSearch).filter(matchFilter);
   const uneditedPolygons = polygons.filter((p:any) => !isEdited(p)).filter(matchSearch).slice(0, 100);
+  const hasAnyEdited = polygons.some(isEdited);
 
   const savedCount = editedPolygons.filter((p: any) => !isUnsaved(p)).length;
   const unsavedCount = editedPolygons.filter((p: any) => isUnsaved(p)).length;
@@ -720,7 +721,7 @@ export default function Sidebar({
               <Search size={14} className="absolute left-2.5 top-2.5 text-gray-400" />
             </div>
 
-             {editedPolygons.length > 0 && (
+             {hasAnyEdited && (
                <div className="mb-4">
                  <div className="flex items-center justify-between mb-2">
                    <h3 className="font-extrabold text-xs text-indigo-700 tracking-wider">
@@ -733,7 +734,7 @@ export default function Sidebar({
                    )}
                  </div>
                  {/* 0件空状態 */}
-                 {editedPolygons.length === 0 && filteredPolygonIds !== null && (
+                 {editedPolygons.length === 0 && (
                    <p className="text-xs text-slate-400 italic py-2">条件に一致する圃場がありません。</p>
                  )}
                  {editedPolygons.map((p: any) => (
