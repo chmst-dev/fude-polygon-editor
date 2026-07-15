@@ -28,7 +28,7 @@ export function parseGeoJSON(jsonStr: string): any[] {
 }
 
 export function exportToGeoJSON(state: { polygons: any[], points: any[] }) {
-  const editedPolygons = state.polygons.filter(p => p.producerName || p.cropType || p.notes || p.remarks);
+  const editedPolygons = state.polygons.filter(p => p.fieldName || p.producerName || p.cropType || p.notes || p.remarks);
   const geojson = {
     type: "FeatureCollection",
     features: [
@@ -46,7 +46,7 @@ export function exportToGeoJSON(state: { polygons: any[], points: any[] }) {
 }
 
 export function exportToKML(state: { polygons: any[], points: any[] }, targetProducer?: string) {
-  let editedPolygons = state.polygons.filter(p => p.producerName || p.cropType || p.notes || p.remarks);
+  let editedPolygons = state.polygons.filter(p => p.fieldName || p.producerName || p.cropType || p.notes || p.remarks);
   
   // 生産者名で絞り込み
   if (targetProducer) {
@@ -86,7 +86,7 @@ export function exportToKML(state: { polygons: any[], points: any[] }, targetPro
 }
 
 export function exportToCSV(state: { polygons: any[], points: any[] }) {
-  const editedPolygons = state.polygons.filter(p => p.producerName || p.cropType || p.notes || p.remarks);
+  const editedPolygons = state.polygons.filter(p => p.fieldName || p.producerName || p.cropType || p.notes || p.remarks);
   let csv = "ID,生産者名,圃場名,作付種別,面積(a),メモ,備考,タイプ,座標(中心目安)\n";
   
   editedPolygons.forEach(p => {

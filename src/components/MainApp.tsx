@@ -353,7 +353,7 @@ function MainAppInner() {
         // キャッシュ済みのuser-editedフィールドと新規筆データをマージ
         setPolygons(prev => {
           const editedMap = new Map(prev
-            .filter(p => !p.properties?.isUnmapped || p.producerName || p.cropType)
+            .filter(p => !p.properties?.isUnmapped || p.fieldName || p.producerName || p.cropType)
             .map(p => [p.internalId, p])
           );
           const merged = new Map([...polygonCacheRef.current, ...editedMap]);
@@ -507,7 +507,7 @@ function MainAppInner() {
       for (const poly of polygons) {
         if (!canEditPolygon(poly)) continue;
         // 未着手筆（サーバーから取得したまま未編集）は保存不要
-        if (poly.properties?.isUnmapped && !poly.producerName && !poly.cropType && !poly.notes) continue;
+        if (poly.properties?.isUnmapped && !poly.fieldName && !poly.producerName && !poly.cropType && !poly.notes) continue;
         const id = poly.internalId;
         if (isSavingFieldRef.current.has(id)) continue; // すでに保存中なら多重実行をスキップ
 

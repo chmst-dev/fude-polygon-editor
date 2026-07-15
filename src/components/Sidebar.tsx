@@ -184,7 +184,7 @@ export default function Sidebar({
   }, [selectedPolygonId, orgId]);
 
 
-  const isEdited = (p: any) => p.producerName || p.cropType || p.notes || p.remarks || points.some((pt: any) => pt.fieldInternalId === p.internalId);
+  const isEdited = (p: any) => p.fieldName || p.producerName || p.cropType || p.notes || p.remarks || points.some((pt: any) => pt.fieldInternalId === p.internalId);
   // DBに未保存（一時ID）かどうかを判定
   const isUnsaved = (p: any) => !p.internalId || p.internalId.startsWith('poly-') || p.internalId.startsWith('source-') || p.internalId.includes('-group-');
   // 登録済み（UUID）かどうか
