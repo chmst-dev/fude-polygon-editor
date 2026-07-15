@@ -203,6 +203,18 @@ function MainAppInner() {
       .map((p) => p.internalId as string);
   })();
 
+  const filterText = useMemo(() => {
+    const parts = [];
+    if (fieldFilter.producerName.trim()) {
+      parts.push(`生産者: ${fieldFilter.producerName.trim()}`);
+    }
+    if (fieldFilter.workTypeId) {
+      const workType = workTypes.find((w: any) => w.id === fieldFilter.workTypeId);
+      parts.push(`作業: ${workType ? workType.name : '不明'}`);
+    }
+    return parts.join(' / ');
+  }, [fieldFilter.producerName, fieldFilter.workTypeId, workTypes]);
+
   // スマホレスポンシブ用のステート
   const [isMobile, setIsMobile] = useState(false);
   const [mobileTab, setMobileTab] = useState<'map' | 'list' | 'edit' | 'points'>('map');
@@ -964,6 +976,32 @@ function MainAppInner() {
               showUndone={fieldFilter.workTypeId !== '' && fieldFilter.showUndone}
             />
           </div>
+
+          {/* 地図フィルター適用中インジケータ */}
+          {filteredPolygonIds !== null && (
+            <div className="absolute top-4 left-14 z-50 flex items-center gap-2 bg-white/95 border border-slate-200/80 px-3 py-2 rounded-2xl shadow-xl backdrop-blur-md text-xs text-slate-700 max-w-[calc(100%-160px)] md:max-w-md">
+              <div className="flex items-center gap-1.5 overflow-hidden">
+                <span className="w-2 h-2 rounded-full bg-indigo-500 flex-shrink-0 animate-pulse" />
+                <div className="flex flex-col md:flex-row md:items-center gap-0.5 md:gap-1.5 overflow-hidden">
+                  <span className="font-extrabold text-[11px] md:text-xs flex-shrink-0 whitespace-nowrap">
+                    フィルター適用中 ({filteredPolygonIds.length}件)
+                  </span>
+                  {filterText && (
+                    <span className="text-[10px] text-slate-500 truncate md:border-l md:border-slate-200 md:pl-1.5">
+                      {filterText}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => setFieldFilter({ producerName: '', workTypeId: '', showUndone: false })}
+                className="ml-auto p-1 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition-colors flex-shrink-0"
+                title="フィルターをクリア"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
 
           {/* フローティングGPS現在位置コントロール */}
           <div className="absolute top-4 right-4 z-50 flex flex-col gap-2">
