@@ -477,15 +477,20 @@ export class SupabaseService implements FieldService {
     if (!this.userOrgId) throw new Error('所属組織がありません。');
 
     // 1. 登録済み圃場（fields.idに一致）が含まれているか検証
-    const { data: existingFields, error: checkFieldError } = await supabase
-      .from('fields')
-      .select('id, field_name, producer_name')
-      .in('id', polygonIds);
+    // fields.id は UUID型のため、polygonIds から UUID 形式のもののみを抽出して問い合わせる
+    const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+    const uuidIds = polygonIds.filter((id) => UUID_RE.test(id));
+    if (uuidIds.length > 0) {
+      const { data: existingFields, error: checkFieldError } = await supabase
+        .from('fields')
+        .select('id, field_name, producer_name')
+        .in('id', uuidIds);
 
-    if (checkFieldError) throw checkFieldError;
-    if (existingFields && existingFields.length > 0) {
-      const names = existingFields.map(f => f.field_name || f.producer_name || '名称未設定').join(', ');
-      throw new Error(`登録済み圃場（${names}）はグループ化できません。未登録の筆を選択してください。`);
+      if (checkFieldError) throw checkFieldError;
+      if (existingFields && existingFields.length > 0) {
+        const names = existingFields.map(f => f.field_name || f.producer_name || '名称未設定').join(', ');
+        throw new Error(`登録済み圃場（${names}）はグループ化できません。未登録の筆を選択してください。`);
+      }
     }
 
     // 2. 既に他の圃場に属しているsource_polygonがあるか検証

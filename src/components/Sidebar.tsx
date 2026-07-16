@@ -188,9 +188,9 @@ export default function Sidebar({
 
   const isEdited = (p: any) => p.fieldName || p.producerName || p.cropType || p.notes || p.remarks || points.some((pt: any) => pt.fieldInternalId === p.internalId);
   // DBに未保存（一時ID）かどうかを判定
-  const isUnsaved = (p: any) => !p.internalId || p.internalId.startsWith('poly-') || p.internalId.startsWith('source-') || p.internalId.includes('-group-');
+  const isUnsaved = useCallback((p: any) => !p.internalId || p.internalId.startsWith('poly-') || p.internalId.startsWith('source-') || p.internalId.includes('-group-'), []);
   // 登録済み（UUID）かどうか
-  const isRegistered = (p: any) => !isUnsaved(p);
+  const isRegistered = useCallback((p: any) => !isUnsaved(p), [isUnsaved]);
 
   // 複数選択モード時に登録済み圃場が混在していないかを監視してエラーを設定
   useEffect(() => {
