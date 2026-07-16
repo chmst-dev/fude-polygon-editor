@@ -65,6 +65,8 @@ export default function Sidebar({
   const [groupFieldName, setGroupFieldName] = useState('');
   const [groupCrop, setGroupCrop] = useState('');
   const [showGroupForm, setShowGroupForm] = useState(false);
+  const [groupError, setGroupError] = useState<string | null>(null);
+  const [isGrouping, setIsGrouping] = useState(false);
 
   // 生産者名サジェスト用
   const [producers, setProducers] = useState<string[]>([]);
@@ -189,6 +191,21 @@ export default function Sidebar({
   const isUnsaved = (p: any) => !p.internalId || p.internalId.startsWith('poly-') || p.internalId.startsWith('source-') || p.internalId.includes('-group-');
   // 登録済み（UUID）かどうか
   const isRegistered = (p: any) => !isUnsaved(p);
+
+  // 複数選択モード時に登録済み圃場が混在していないかを監視してエラーを設定
+  useEffect(() => {
+    if (!isMultiSelectMode) {
+      setGroupError(null);
+      return;
+    }
+    const selectedPolys = polygons.filter((p: any) => selectedPolygonIds.includes(p.internalId));
+    const hasRegistered = selectedPolys.some(isRegistered);
+    if (hasRegistered) {
+      setGroupError('登録済み圃場はグループ化できません。登録済み圃場をまとめる場合は『登録済み圃場を統合する』を使ってください。');
+    } else {
+      setGroupError(null);
+    }
+  }, [selectedPolygonIds, isMultiSelectMode, polygons, isRegistered]);
 
   // 検索フィルター（既存のテキスト検索、フィルターは MainApp 経由の filteredPolygonIds で管理）
   const matchSearch = (p: any) => {
@@ -332,9 +349,14 @@ export default function Sidebar({
 
   // 圃場グループ化処理
   const handleGroupPolygons = async () => {
-    if (isGuestMode || !canEdit) return;
+    if (isGuestMode || !canEdit || isGrouping) return;
     if (selectedPolygonIds.length < 2) {
       toast.error('グループ化には、2つ以上の筆ポリゴンを選択してください。');
+      return;
+    }
+    const selectedPolys = polygons.filter((p: any) => selectedPolygonIds.includes(p.internalId));
+    if (selectedPolys.some(isRegistered)) {
+      toast.error('登録済み圃場はグループ化できません。');
       return;
     }
     if (!groupProducer || !groupFieldName) {
@@ -342,6 +364,7 @@ export default function Sidebar({
       return;
     }
 
+    setIsGrouping(true);
     try {
       if (dbService) {
         const newField = await dbService.groupPolygons(selectedPolygonIds, {
@@ -393,6 +416,8 @@ export default function Sidebar({
     } catch (e: any) {
       console.error(e);
       toast.error('グループ化に失敗しました: ' + e.message);
+    } finally {
+      setIsGrouping(false);
     }
   };
 
@@ -683,6 +708,12 @@ export default function Sidebar({
                     </button>
                   ) : (
                     <div className="space-y-3 mt-2 pt-2 border-t border-indigo-100">
+                      {groupError && (
+                        <div className="flex items-start gap-1.5 bg-rose-50 border border-rose-200 rounded-xl p-2.5 text-xs text-rose-700">
+                          <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                          <span className="whitespace-pre-wrap">{groupError}</span>
+                        </div>
+                      )}
                       <div>
                         <label className="block text-slate-600 font-bold mb-1">生産者名 *</label>
                         <input type="text" value={groupProducer} onChange={e => setGroupProducer(e.target.value)} placeholder="例: 山田太郎" className="w-full border p-2 bg-white rounded-lg outline-none focus:border-indigo-500" />
@@ -696,8 +727,20 @@ export default function Sidebar({
                         <input type="text" value={groupCrop} onChange={e => setGroupCrop(e.target.value)} placeholder="例: コシヒカリ" className="w-full border p-2 bg-white rounded-lg outline-none focus:border-indigo-500" />
                       </div>
                       <div className="flex gap-2 pt-1">
-                        <button onClick={handleGroupPolygons} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded-lg transition shadow">作成する</button>
-                        <button onClick={() => setShowGroupForm(false)} className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-2 rounded-lg transition">キャンセル</button>
+                        <button
+                          onClick={handleGroupPolygons}
+                          disabled={isGrouping || !!groupError}
+                          className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded-lg transition shadow disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {isGrouping ? '作成中...' : '作成する'}
+                        </button>
+                        <button
+                          onClick={() => setShowGroupForm(false)}
+                          disabled={isGrouping}
+                          className="flex-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-2 rounded-lg transition disabled:opacity-50"
+                        >
+                          キャンセル
+                        </button>
                       </div>
                     </div>
                   )

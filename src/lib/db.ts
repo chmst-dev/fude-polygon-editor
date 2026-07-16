@@ -476,6 +476,47 @@ export class SupabaseService implements FieldService {
     await this.isOnline();
     if (!this.userOrgId) throw new Error('所属組織がありません。');
 
+    // 1. 登録済み圃場（fields.idに一致）が含まれているか検証
+    const { data: existingFields, error: checkFieldError } = await supabase
+      .from('fields')
+      .select('id, field_name, producer_name')
+      .in('id', polygonIds);
+
+    if (checkFieldError) throw checkFieldError;
+    if (existingFields && existingFields.length > 0) {
+      const names = existingFields.map(f => f.field_name || f.producer_name || '名称未設定').join(', ');
+      throw new Error(`登録済み圃場（${names}）はグループ化できません。未登録の筆を選択してください。`);
+    }
+
+    // 2. 既に他の圃場に属しているsource_polygonがあるか検証
+    const { data: existingRelations, error: checkRelationError } = await supabase
+      .from('field_source_polygons')
+      .select(`
+        source_polygon_id,
+        fields (
+          id,
+          field_name,
+          producer_name
+        )
+      `)
+      .in('source_polygon_id', polygonIds);
+
+    if (checkRelationError) throw checkRelationError;
+    if (existingRelations && existingRelations.length > 0) {
+      const dupFields = existingRelations.map((r: any) => {
+        let f = r.fields;
+        if (Array.isArray(f)) {
+          f = f[0];
+        }
+        if (!f) return '不明な圃場';
+        const pName = f.producer_name ? `${f.producer_name} ` : '';
+        const fName = f.field_name || '名称未設定';
+        return `「${pName}${fName}」`;
+      });
+      const uniqueDupFields = Array.from(new Set(dupFields)).join(', ');
+      throw new Error(`選択された筆は既に他の圃場（${uniqueDupFields}）に登録されています。`);
+    }
+
     const dbField = {
       producer_name: fieldData.producerName || '',
       field_name: fieldData.fieldName || '',
