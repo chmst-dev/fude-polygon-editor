@@ -532,7 +532,7 @@ export default function LeafletMap({
         ))}
 
         {/* 各圃場の最新作業履歴アイコンを重心に表示 */}
-        <Pane name="work-history-icons" style={{ zIndex: 720 }}>
+        <Pane name="work-history-icons" style={{ zIndex: 620 }}>
         {visibleWorkPolygons.map((p: FieldPolygon) => {
           // フィルタリングが有効かつ該当しない圃場なら表示しない
           if (filteredPolygonIds !== null && !filteredPolygonIds.includes(p.internalId)) {
